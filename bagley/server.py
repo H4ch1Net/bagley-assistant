@@ -320,6 +320,7 @@ def content_security_policy(html: str) -> str:
 
 def create_app(runtime: Runtime | None = None, config: ServerConfig | None = None) -> FastAPI:
     config = runtime.config if runtime else (config or ServerConfig.from_env())
+    background: set[asyncio.Task[None]] = set()  # "Run now" tasks, stopped on shutdown.
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -329,6 +330,9 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         try:
             yield
         finally:
+            for task in list(background):
+                task.cancel()
+            await asyncio.gather(*background, return_exceptions=True)
             await rt.aclose()
 
     app = FastAPI(
@@ -338,8 +342,6 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     def rt() -> Runtime:
         return app.state.runtime
-
-    background: set[asyncio.Task[None]] = set()
 
     index_html = (
         (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("{{version}}", __version__)
@@ -614,6 +616,8 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         item = rt().store.get_automation(aid)
         if not item:
             raise HTTPException(404, "Automation not found.")
+        if rt().scheduler.busy(item):
+            raise HTTPException(409, "Its chat is answering right now. Try again when it's done.")
         task = asyncio.create_task(rt().scheduler.run(item))
         background.add(task)
         task.add_done_callback(background.discard)
@@ -647,6 +651,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
             raise HTTPException(404, "That folder is not in the knowledge base.")
         rt().update_preferences({"knowledge_folders": remaining})
         await asyncio.to_thread(rt().knowledge.forget_folder, Path(path))
+        rt().knowledge.request_reindex()  # Also drops anything a running pass re-adds.
         return rt().knowledge.status()
 
     @app.post("/api/knowledge/reindex", status_code=202)

@@ -162,6 +162,7 @@ class KnowledgeBase:
         self.last_indexed: float | None = None
         self.embedding_model: str | None = None
         self._task: asyncio.Task[None] | None = None
+        self._pending = False  # Asked to reindex while a pass was running.
         self._loop_task: asyncio.Task[None] | None = None
 
     def close(self) -> None:
@@ -208,18 +209,24 @@ class KnowledgeBase:
             await asyncio.sleep(REINDEX_EVERY)
 
     def request_reindex(self) -> None:
-        if self._task and not self._task.done():
+        if self.state == "indexing" or (self._task and not self._task.done()):
+            self._pending = True
             return
         self._task = asyncio.create_task(self.reindex())
 
     async def reindex(self) -> dict[str, int]:
         if self.state == "indexing":
+            self._pending = True  # The running pass goes round again when it finishes.
             return {}
         self.state, self.error = "indexing", ""
         await self._broadcast()
         try:
-            counts = await asyncio.to_thread(self._scan)
-            await self._embed_missing()
+            while True:
+                self._pending = False
+                counts = await asyncio.to_thread(self._scan)
+                await self._embed_missing()
+                if not self._pending:
+                    break
             self.last_indexed = time.time()
             return counts
         except Exception as exc:

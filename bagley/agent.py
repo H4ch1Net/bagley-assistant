@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError
 from bagley.llm.textparse import StreamParser
+from bagley.policy import UnattendedPolicy
 from bagley.prompts import TITLE_PROMPT, clean_title, heuristic_title, system_prompt, to_prompt_mode
 from bagley.runtime import Runtime
 from bagley.toolroute import select_tools
@@ -32,6 +33,8 @@ class RunRequest:
     text: str = ""
     conversation_id: str | None = None
     mode: Literal["send", "regenerate", "edit"] = "send"
+    tools: bool = True
+    policy: UnattendedPolicy | None = None  # Set for runs nobody is watching.
 
 
 @dataclass
@@ -235,7 +238,11 @@ class Agent:
             provider = await rt.provider()
             model = await rt.resolve_model(provider, prefs)
             caps = await provider.capabilities(model)
-            tools = rt.registry.enabled(prefs.disabled_tools) if prefs.tool_mode != "off" else []
+            tools = (
+                rt.registry.enabled(prefs.disabled_tools)
+                if prefs.tool_mode != "off" and req.tools
+                else []
+            )
             mode: ToolMode = "off"
             if tools:
                 if prefs.tool_mode in ("native", "prompt"):
@@ -296,7 +303,9 @@ class Agent:
                 if not pending_calls:
                     break
                 while pending_calls:
-                    await self._run_tool(cid, pending_calls[0], emit, approve, prefs.disabled_tools)
+                    await self._run_tool(
+                        cid, pending_calls[0], emit, approve, prefs.disabled_tools, req.policy
+                    )
                     pending_calls.pop(0)
                 if index == prefs.max_steps - 1:
                     await emit(
@@ -435,7 +444,13 @@ class Agent:
     # Tools ----------------------------------------------------------------------------------
 
     async def _run_tool(
-        self, cid: str, call: ToolCall, emit: Emit, approve: Approve, disabled: list[str]
+        self,
+        cid: str,
+        call: ToolCall,
+        emit: Emit,
+        approve: Approve,
+        disabled: list[str],
+        policy: UnattendedPolicy | None = None,
     ) -> None:
         tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
         if tool and tool.name in disabled:
@@ -455,6 +470,8 @@ class Agent:
         if tool is None:
             names = ", ".join(t.name for t in self.rt.registry.enabled(disabled))
             result = f"Error: there is no tool named '{call.name}'. Available tools: {names}"
+        elif policy and (reason := policy.check(tool, call.arguments)):
+            result = f"Not run: {reason}"
         else:
             allowed = True
             if tool.risk == "confirm":
@@ -476,6 +493,8 @@ class Agent:
                 try:
                     result, ui = await tool.run(call.arguments, self.rt.tool_context(cid))
                     ok = True
+                    if policy:
+                        policy.observe(tool, result)
                 except ToolError as exc:
                     result = f"Error: {exc}"
                 except Exception as exc:

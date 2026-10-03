@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 
 import httpx
 import pytest
@@ -104,3 +105,24 @@ def test_schema_migration_adds_unread(tmp_path):
         "unread": 0,
     }
     store.close()
+
+
+async def test_edit_keeps_windows_line_endings(ctx):
+    path = ctx.config.workspace / "crlf.txt"
+    path.write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    await call(ctx, "edit_file", path="crlf.txt", find="two\nthree", replace="2\n3")
+    assert path.read_bytes() == b"one\r\n2\r\n3\r\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+async def test_delete_and_move_act_on_symlinks_not_their_targets(ctx):
+    ws = ctx.config.workspace
+    (ws / "data").mkdir()
+    (ws / "data" / "real.csv").write_text("a,b")
+    (ws / "latest.csv").symlink_to(ws / "data" / "real.csv")
+    _, ui = await call(ctx, "delete_file", path="latest.csv")
+    assert not (ws / "latest.csv").is_symlink() and (ws / "data" / "real.csv").exists()
+    journal.revert(ctx.store, ctx.config, ui["journal_id"])
+    assert (ws / "latest.csv").is_symlink()
+    await call(ctx, "move_file", source="latest.csv", destination="current.csv")
+    assert (ws / "current.csv").is_symlink() and (ws / "data" / "real.csv").exists()

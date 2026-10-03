@@ -26,6 +26,19 @@ def resolve(ctx: ToolContext, path: str) -> Path:
     return target
 
 
+def resolve_entry(ctx: ToolContext, path: str) -> Path:
+    """Like ``resolve``, but a symlink stays the link itself, so moving or deleting it acts on
+    the link and not on the file it points to."""
+    target = resolve(ctx, path)
+    root = Path(ctx.config.workspace or ".").resolve()
+    link = root / (path or ".").strip().replace("\\", "/").lstrip("/")
+    if link.is_symlink():
+        link = link.parent.resolve() / link.name
+        if link.parent == root or root in link.parent.parents:
+            return link
+    return target
+
+
 def _rel(ctx: ToolContext, path: Path) -> str:
     root = Path(ctx.config.workspace or ".").resolve()
     return path.relative_to(root).as_posix() or "."
@@ -191,7 +204,13 @@ def edit_file(
     target = resolve(ctx, path)
     if not target.is_file():
         raise ToolError(f"'{path}' is not a file.")
-    old = _read_text(target)
+    try:  # newline="" keeps the file's own line endings.
+        with target.open(encoding="utf-8", newline="") as f:
+            old = f.read()
+    except UnicodeDecodeError as exc:
+        raise ToolError(f"'{path}' is not a UTF-8 text file.") from exc
+    if "\r\n" in old and "\r\n" not in find:
+        find, replace = find.replace("\n", "\r\n"), replace.replace("\n", "\r\n")
     count = old.count(find) if find else 0
     if count == 0:
         raise ToolError("The text to replace was not found. Read the file and copy it exactly.")
@@ -199,7 +218,8 @@ def edit_file(
         raise ToolError(f"The text appears {count} times. Add more context or set all_occurrences.")
     new = old.replace(find, replace) if all_occurrences else old.replace(find, replace, 1)
     backup = snapshot(ctx.config, target)
-    target.write_text(new, encoding="utf-8")
+    with target.open("w", encoding="utf-8", newline="") as f:
+        f.write(new)
     return _changed(
         ctx, "edit", target, old, new, backup, f"Edited ({count} replacement{'s' * (count > 1)})"
     )
@@ -212,7 +232,7 @@ def move_file(
     destination: Annotated[str, "New path, relative to the workspace"],
 ) -> ToolOutput:
     """Move or rename a file or folder in the workspace. Asks the user first; can be reverted."""
-    src = resolve(ctx, source)
+    src = resolve_entry(ctx, source)
     dst = resolve(ctx, destination)
     if not src.exists():
         raise ToolError(f"'{source}' does not exist.")
@@ -242,7 +262,7 @@ def delete_file(
 ) -> ToolOutput:
     """Delete a file or folder from the workspace. It is kept in Bagley's journal so the user can
     restore it. Asks the user first."""
-    target = resolve(ctx, path)
+    target = resolve_entry(ctx, path)
     root = Path(ctx.config.workspace or ".").resolve()
     if target == root:
         raise ToolError("Refusing to delete the whole workspace.")

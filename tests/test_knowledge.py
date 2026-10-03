@@ -133,3 +133,22 @@ def test_knowledge_api(make_runtime, notes, tmp_path):
         )
         assert c.delete("/api/knowledge/folders", params={"path": str(notes)}).json()["files"] == 0
         assert c.delete("/api/knowledge/folders", params={"path": str(notes)}).status_code == 404
+
+
+async def test_reindex_requested_mid_pass_runs_again(make_runtime, notes):
+    rt = make_runtime(knowledge_folders=[str(notes)])
+    kb = rt.knowledge
+    scans = []
+    scan = kb._scan
+
+    def counting_scan():
+        scans.append(1)
+        return scan()
+
+    async def ask_again():
+        if len(scans) == 1:
+            kb.request_reindex()  # E.g. a folder was added while the first pass ran.
+
+    kb._scan, kb._embed_missing = counting_scan, ask_again
+    await kb.reindex()
+    assert len(scans) == 2 and kb.state == "idle"

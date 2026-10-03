@@ -327,6 +327,11 @@ def cmd_ask(args: argparse.Namespace) -> int:
     from bagley.runtime import Runtime
     from bagley.tools import Tool
 
+    # Redirected streams default to the locale's code page on Windows; answers are UTF-8.
+    streams = [sys.stdout, sys.stderr] + ([] if sys.stdin.isatty() else [sys.stdin])
+    for stream in streams:
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     question = " ".join(args.question).strip()
     piped = "" if sys.stdin.isatty() else sys.stdin.read()
     if len(piped) > MAX_STDIN:

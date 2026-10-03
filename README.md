@@ -156,7 +156,7 @@ Tools can be switched off individually in **Settings → Tools**. File tools can
 
 Ask in plain language ("remind me in 20 minutes to check the oven", "every weekday at 8:00 summarise the news on Rust", "watch this page and tell me when the price changes") or use **Settings → Automations**. Schedules accept forms like `in 45 minutes`, `at 18:30`, `tomorrow at 9am`, `every 2 hours`, `daily at 07:30`, `weekdays at 09:00` and `mondays, thursdays at 18:00`.
 
-Automations run while Bagley is running. A run that was missed while it was off happens once at the next start. Unattended runs cannot use tools that need approval; they are denied and the result says so.
+Automations run while Bagley is running. A run that was missed while it was off happens once at the next start. Unattended runs are restricted (see [Security](#security)); a refused tool call is recorded in the automation's chat.
 
 ### Knowledge base
 
@@ -275,7 +275,7 @@ Bagley can act on your behalf, so it is locked down by default:
 - File tools are confined to the workspace folder, symlinks included.
 - Web tools refuse loopback and private network addresses, re-check every redirect, and connect to the exact address they checked, so DNS rebinding can't point them at your network. Downloads are capped in size.
 - File changes, `run_command`, `run_python`, new scheduled tasks and watchers, and untrusted MCP tools wait for your approval. Shell and Python access are off unless you enable them, and stopping a command ends everything it started.
-- Automations run without you watching, so any tool that would need approval is denied during an unattended run.
+- Automations run without you watching. During those runs, tools that need approval are denied, and memories, automations and folders can't be changed. Once a run has read web content it can't read your files or notes, and it can only open pages from its search results. Watcher instructions run with no tools at all. Text on a web page therefore can't send your data anywhere.
 - Every file change is journaled with the previous version, so a bad edit can be reverted.
 - A saved API key is cleared when the server URL changes, and a key set through `BAGLEY_API_KEY` locks the server URL, so the key only goes where you configured it.
 - The UI loads nothing from the internet and sends a strict Content-Security-Policy. Model output is sanitized: no images, frames or forms, so a prompt-injected page can't make the browser leak data.
