@@ -20,6 +20,8 @@
   --t-med: 200ms;
   --t-slow: 320ms;
 
+  /* The avatar's face is always dark, so its light stays bright in both themes. */
+  --avatar-accent: hsl(var(--accent-h) 88% var(--accent-l, 62%));
   --sidebar-w: 272px;
   --presence-w: 300px;
   --thread-w: 760px;
@@ -38,9 +40,9 @@
   --border-strong: rgb(255 255 255 / .13);
   --text: #e8ebf1;
   --text-2: #a6aec0;
-  --text-3: #6e778c;
-  --accent: hsl(var(--accent-h) 88% 62%);
-  --accent-strong: hsl(var(--accent-h) 92% 70%);
+  --text-3: #8a93a7;
+  --accent: hsl(var(--accent-h) 88% var(--accent-l, 62%));
+  --accent-strong: hsl(var(--accent-h) 92% calc(var(--accent-l, 62%) + 8%));
   --accent-soft: hsl(var(--accent-h) 80% 60% / .14);
   --accent-ink: hsl(var(--accent-h) 70% 8%);
   --ok: #4ade80;
@@ -67,9 +69,9 @@
   --border-strong: rgb(15 20 30 / .16);
   --text: #12151b;
   --text-2: #4a5263;
-  --text-3: #7c8496;
-  --accent: hsl(var(--accent-h) 85% 34%);
-  --accent-strong: hsl(var(--accent-h) 90% 28%);
+  --text-3: #5f6779;
+  --accent: hsl(var(--accent-h) 85% 28%);
+  --accent-strong: hsl(var(--accent-h) 90% 23%);
   --accent-soft: hsl(var(--accent-h) 80% 40% / .1);
   --accent-ink: #ffffff;
   --ok: #15803d;
@@ -883,6 +885,7 @@ button.stat:hover { background: var(--surface); }
 .choice strong { display: block; font-size: 14px; }
 .choice span { display: block; font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
 .choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice:has(input:checked) span { color: var(--text-2); }
 .choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .segmented { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }

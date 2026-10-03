@@ -17,7 +17,9 @@
       if (theme === "system") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
       var root = document.documentElement;
       root.dataset.theme = theme;
-      root.style.setProperty("--accent-h", get("accent", 188));
+      var hue = get("accent", 188);
+      root.style.setProperty("--accent-h", hue);
+      root.style.setProperty("--accent-l", hue >= 230 && hue <= 290 ? "70%" : "62%");
       if (get("reduceMotion", false)) root.classList.add("reduce-motion");
     })();
   </script>

@@ -38,7 +38,7 @@ let palette = null;
 function readPalette() {
   const s = getComputedStyle(document.documentElement);
   palette = {
-    accent: toRgb(s.getPropertyValue("--accent")),
+    accent: toRgb(s.getPropertyValue("--avatar-accent")),
     warn: toRgb(s.getPropertyValue("--warn")),
     danger: toRgb(s.getPropertyValue("--danger")),
     muted: toRgb(s.getPropertyValue("--text-3")),
@@ -371,10 +371,10 @@ export function avatarGlyph(size = 24) {
   svg.setAttribute("height", size);
   svg.setAttribute("aria-hidden", "true");
   svg.innerHTML =
-    '<circle cx="12" cy="12" r="11" fill="var(--avatar-face)" stroke="var(--accent)" stroke-opacity=".45"/>' +
-    '<rect x="7.2" y="7.6" width="3" height="5.6" rx="1.5" fill="var(--accent)"/>' +
-    '<rect x="13.8" y="7.6" width="3" height="5.6" rx="1.5" fill="var(--accent)"/>' +
-    '<path d="M9 16.2q3 1.4 6 0" stroke="var(--accent)" stroke-width="1.4" fill="none" stroke-linecap="round"/>';
+    '<circle cx="12" cy="12" r="11" fill="var(--avatar-face)" stroke="var(--avatar-accent)" stroke-opacity=".45"/>' +
+    '<rect x="7.2" y="7.6" width="3" height="5.6" rx="1.5" fill="var(--avatar-accent)"/>' +
+    '<rect x="13.8" y="7.6" width="3" height="5.6" rx="1.5" fill="var(--avatar-accent)"/>' +
+    '<path d="M9 16.2q3 1.4 6 0" stroke="var(--avatar-accent)" stroke-width="1.4" fill="none" stroke-linecap="round"/>';
   return svg;
 }
 

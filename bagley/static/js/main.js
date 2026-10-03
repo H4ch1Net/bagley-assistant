@@ -679,6 +679,8 @@ function applyAppearance() {
   const theme = state.ui.theme === "system" ? (systemLight.matches ? "light" : "dark") : state.ui.theme;
   root.dataset.theme = theme;
   root.style.setProperty("--accent-h", state.ui.accent);
+  // Blue-violet hues are dark at equal lightness; lift them to keep text on them readable.
+  root.style.setProperty("--accent-l", state.ui.accent >= 230 && state.ui.accent <= 290 ? "70%" : "62%");
   root.classList.toggle("reduce-motion", Boolean(state.ui.reduceMotion));
   document.querySelector('meta[name="theme-color"]').content = theme === "light" ? "#f7f8fa" : "#090b0f";
 }
