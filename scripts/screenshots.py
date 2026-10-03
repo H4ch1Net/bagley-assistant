@@ -26,10 +26,11 @@ OUT = ROOT / "docs" / "screenshots"
 APP_PORT = 8790
 
 
-def capture(url: str) -> None:
+def capture(stack: DemoStack) -> None:
     from playwright.sync_api import sync_playwright
 
     OUT.mkdir(parents=True, exist_ok=True)
+    url = stack.url
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
 
@@ -83,6 +84,7 @@ def capture(url: str) -> None:
         page = page_for(1440, 900, theme="light")
         page.click(".conv-link >> text=Weekend weather in Lisbon")
         page.wait_for_selector(".tool-card")
+        page.mouse.move(900, 860)
         page.wait_for_timeout(500)
         page.screenshot(path=OUT / "light.png")
         page.context.close()
@@ -92,6 +94,18 @@ def capture(url: str) -> None:
         ask(page, "Split €128.68 four ways with a 12% tip")
         page.screenshot(path=OUT / "mobile.png")
         page.context.close()
+
+        # 7. First run without a model server.
+        stack.runtime.update_preferences({"base_url": "http://127.0.0.1:9"})
+        ctx = browser.new_context(
+            viewport={"width": 1440, "height": 900}, device_scale_factor=2, color_scheme="dark"
+        )
+        page = ctx.new_page()
+        page.goto(url + "#/")
+        page.wait_for_selector(".setup h3")
+        page.wait_for_timeout(1200)
+        page.screenshot(path=OUT / "onboarding.png")
+        ctx.close()
         browser.close()
     for path in sorted(OUT.glob("*.png")):
         print(f"wrote {path.relative_to(ROOT)} ({path.stat().st_size // 1024} KB)")
@@ -111,7 +125,7 @@ def main() -> None:
             print(f"Demo running at {stack.url} (Ctrl+C to stop)")
             while True:
                 time.sleep(3600)
-        capture(stack.url)
+        capture(stack)
     except KeyboardInterrupt:
         pass
     finally:

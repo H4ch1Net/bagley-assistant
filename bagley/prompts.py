@@ -82,7 +82,10 @@ def system_prompt(
     if tools:
         guide = TOOL_GUIDE
         if any(t.category == "files" for t in tools):
-            guide += f"\n- File tools work inside the workspace folder: {workspace}"
+            guide += (
+                f"\n- File tools work inside the workspace folder: {workspace}. Files the user "
+                "attaches are saved there under uploads/; read them with read_file."
+            )
         if prompt_mode:
             listing = "\n".join(
                 json.dumps(

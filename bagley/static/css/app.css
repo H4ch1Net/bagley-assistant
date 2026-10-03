@@ -701,9 +701,9 @@ kbd {
 .composer-wrap { flex: none; padding: 0 24px 14px; }
 .composer {
   position: relative;
-  display: flex; align-items: flex-end; gap: 6px;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px;
   max-width: var(--thread-w); margin: 0 auto;
-  padding: 8px 8px 8px 16px;
+  padding: 8px 8px 8px 6px;
   border-radius: var(--r-xl);
   border: 1px solid var(--border-strong);
   background: var(--surface);
@@ -720,6 +720,24 @@ kbd {
   line-height: 1.5;
 }
 .composer textarea::placeholder { color: var(--text-3); }
+.composer.dragging { border-color: var(--accent); border-style: dashed; box-shadow: var(--shadow-md), 0 0 0 4px var(--accent-soft); }
+.composer.dragging::after {
+  content: "Drop text files to attach";
+  position: absolute; inset: 0; display: grid; place-items: center;
+  border-radius: inherit; background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--accent); font-weight: 600; font-size: 14px; pointer-events: none;
+}
+.attach-btn { flex: none; }
+.attachments { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 4px 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 4px 0 10px; max-width: 260px;
+  border-radius: var(--r-sm); border: 1px solid var(--border-strong); background: var(--surface-2);
+  font-size: 12.5px; animation: rise var(--t-med) var(--ease);
+}
+.chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.chip .size { color: var(--text-3); flex: none; }
+.chip.failed { border-color: var(--danger); color: var(--danger); }
 .composer-actions { display: flex; align-items: center; gap: 4px; }
 .send-btn {
   display: grid; place-items: center;

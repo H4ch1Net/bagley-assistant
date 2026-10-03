@@ -82,6 +82,9 @@
 
       <footer class="composer-wrap">
         <form class="composer" id="composer" autocomplete="off">
+          <div class="attachments" id="attachments" hidden></div>
+          <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="Attach text files" title="Attach text files (saved to your workspace)"><svg class="icon"><use href="/static/icons.svg#i-paperclip"/></svg></button>
+          <input type="file" id="file-input" multiple hidden>
           <textarea id="composer-input" rows="1" placeholder="Message Bagley…" aria-label="Message Bagley" enterkeyhint="send"></textarea>
           <div class="composer-actions">
             <button type="button" class="icon-btn mic-btn" id="mic-btn" aria-label="Voice input" title="Voice input (uses your browser's speech service)" hidden><svg class="icon"><use href="/static/icons.svg#i-mic"/></svg></button>

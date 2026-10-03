@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -40,6 +40,7 @@ log = logging.getLogger("bagley.server")
 STATIC_DIR = Path(__file__).parent / "static"
 TOKEN_COOKIE = "bagley_token"
 APPROVAL_TIMEOUT = 600.0
+MAX_UPLOAD_BYTES = 5_000_000
 
 
 # Security -------------------------------------------------------------------------------------
@@ -395,6 +396,30 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
                 f"filename*=UTF-8''{quote(name)}.md"
             },
         )
+
+    @app.put("/api/workspace/uploads/{name}", status_code=201)
+    async def upload(name: str, request: Request) -> dict[str, Any]:
+        """Save a file the user attached into the workspace, where the file tools can read it."""
+        clean = "".join(c if c.isalnum() or c in "._- " else "_" for c in Path(name).name).strip(
+            " ."
+        )
+        if not clean:
+            raise HTTPException(400, "Invalid file name.")
+        body = await request.body()
+        if len(body) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413, f"Files up to {MAX_UPLOAD_BYTES // 1_000_000} MB can be attached."
+            )
+        folder = Path(rt().config.workspace or ".") / "uploads"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / clean
+        stem, suffix = target.stem, target.suffix
+        n = 1
+        while target.exists():
+            n += 1
+            target = folder / f"{stem}-{n}{suffix}"
+        target.write_bytes(body)
+        return {"path": f"uploads/{target.name}", "size": len(body)}
 
     @app.get("/api/memories")
     async def list_memories() -> list[dict[str, Any]]:

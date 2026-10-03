@@ -125,6 +125,23 @@ def test_memories_and_tools(client):
     assert "run_command" not in names
 
 
+def test_upload_into_workspace(client):
+    first = client.put("/api/workspace/uploads/notes.txt", content=b"hello")
+    assert first.status_code == 201 and first.json() == {"path": "uploads/notes.txt", "size": 5}
+    second = client.put("/api/workspace/uploads/notes.txt", content=b"again")
+    assert second.json()["path"] == "uploads/notes-2.txt"
+    assert (
+        client.put("/api/workspace/uploads/..%2F..%2Fescape.txt", content=b"x").status_code == 404
+    )
+    assert (
+        client.put("/api/workspace/uploads/..evil$.txt", content=b"x").json()["path"]
+        == "uploads/evil_.txt"
+    )
+    assert (client.runtime.config.workspace / "uploads" / "notes.txt").read_text() == "hello"
+    too_big = client.put("/api/workspace/uploads/big.bin", content=b"0" * 5_000_001)
+    assert too_big.status_code == 413
+
+
 def test_model_pull_streams_progress(client):
     with client.stream("POST", "/api/models/pull", json={"name": "tiny:1b"}) as resp:
         lines = [json.loads(line) for line in resp.iter_lines() if line]

@@ -186,6 +186,17 @@ def test_plugins_load_and_errors_are_reported(config):
     assert reg.errors == [{"source": "plugin:broken.py", "error": "boom"}]
 
 
+@pytest.mark.anyio
+async def test_example_plugin(config, ctx):
+    from pathlib import Path
+
+    config.plugins_dir = Path(__file__).parents[1] / "examples" / "plugins"
+    reg = build_registry(config)
+    assert reg.errors == []
+    assert '"total"' in await reg.get("roll_dice").invoke({"sides": "6", "count": 2}, ctx)
+    assert "free_gb" in await reg.get("disk_space").invoke({}, ctx)
+
+
 def test_registry_enabled_filter():
     reg = Registry()
 

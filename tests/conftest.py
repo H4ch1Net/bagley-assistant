@@ -50,7 +50,9 @@ def make_runtime(config: ServerConfig, mock: MockLLM):
         created.append(rt)
         return rt
 
-    return factory
+    yield factory
+    for rt in created:
+        rt.store.close()  # Lets Windows delete the temp directory.
 
 
 class Recorder:

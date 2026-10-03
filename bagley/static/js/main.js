@@ -1,6 +1,7 @@
 // Entry point: wires state, socket, avatar, thread, sidebar, settings and shortcuts together.
 
 import { api, ChatSocket } from "./api.js";
+import { Attachments } from "./attachments.js";
 import { mountAvatars } from "./avatar.js";
 import { Chat } from "./chat.js";
 import { pullModel, RECOMMENDED_MODELS, savePrefs, Settings } from "./settings.js";
@@ -49,6 +50,7 @@ const chat = new Chat({
   },
   onRunEnd: (ev, { failed }) => {
     setStatus(failed ? "error" : ev.stopped ? "idle" : "happy");
+    if (document.hidden && !ev.stopped) document.title = `● ${document.title.replace(/^● /, "")}`;
     updateComposer();
     sidebar.refresh();
     renderStats();
@@ -164,6 +166,9 @@ async function route() {
 }
 
 addEventListener("popstate", route);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) document.title = document.title.replace(/^● /, "");
+});
 
 function setTitle(title) {
   const btn = $("#title-btn");
@@ -227,6 +232,21 @@ document.addEventListener("bagley:speak", (e) => chat.speak(e.detail));
 
 // Composer ---------------------------------------------------------------------------------------
 
+const attachments = new Attachments({ onChange: () => updateComposer() });
+attachments.bindDrop($("#main"), $("#composer"));
+$("#attach-btn").addEventListener("click", () => $("#file-input").click());
+$("#file-input").addEventListener("change", (e) => {
+  attachments.add([...e.target.files]);
+  e.target.value = "";
+});
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) {
+    e.preventDefault();
+    attachments.add(files);
+  }
+});
+
 function autosize() {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, innerHeight * 0.4)}px`;
@@ -239,7 +259,8 @@ function updateComposer() {
   btn.replaceChildren(icon(running ? "square" : "arrow-up"));
   btn.setAttribute("aria-label", running ? "Stop reply" : "Send message");
   btn.title = running ? "Stop (Esc)" : "Send (Enter)";
-  btn.disabled = !running && (!input.value.trim() || !state.connected);
+  const hasContent = input.value.trim() || attachments.ready.length;
+  btn.disabled = !running && (!hasContent || attachments.uploading || !state.connected);
 }
 
 function submit() {
@@ -247,10 +268,15 @@ function submit() {
     chat.stop();
     return;
   }
-  const text = input.value.trim();
-  if (!text) return;
-  if (chat.send(text)) {
+  if (attachments.uploading) {
+    toast("Still attaching files…");
+    return;
+  }
+  const typed = input.value.trim() || (attachments.ready.length ? "Take a look at the attached file." : "");
+  if (!typed) return;
+  if (chat.send(typed + attachments.note())) {
     input.value = "";
+    attachments.clear();
     autosize();
     updateComposer();
   }
@@ -489,7 +515,7 @@ $("#conn-status").addEventListener("click", () => settings.open("model"));
 const SUGGESTIONS = [
   { icon: "cloud-sun", title: "Weekend weather", text: "What's the weather in Lisbon this weekend?" },
   { icon: "calculator", title: "Split a bill", text: "Split €128.68 four ways with a 12% tip" },
-  { icon: "globe", title: "Catch up", text: "Search the web for this week's biggest tech news and summarise it" },
+  { icon: "globe", title: "Catch up", text: "Search the web for today's top tech headlines" },
   { icon: "bookmark", title: "Teach me", text: "Remember that I prefer metric units and Python examples" },
 ];
 

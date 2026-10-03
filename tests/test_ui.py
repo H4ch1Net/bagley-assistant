@@ -154,6 +154,18 @@ def test_settings_persona_memory_and_theme(page, stack):
     assert page.evaluate("document.documentElement.dataset.theme") == "light"
 
 
+def test_attach_file(page, stack, tmp_path):
+    note = tmp_path / "todo.txt"
+    note.write_text("buy milk")
+    page.set_input_files("#file-input", str(note))
+    page.wait_for_selector(".chip.ready")
+    page.click("#send-btn")
+    wait_idle(page)
+    assert "Attached: uploads/todo.txt" in page.inner_text(".turn-user .bubble")
+    assert (stack.runtime.config.workspace / "uploads" / "todo.txt").read_text() == "buy milk"
+    assert page.locator(".chip").count() == 0
+
+
 def test_mobile_layout(browser, stack):
     context = browser.new_context(
         viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
