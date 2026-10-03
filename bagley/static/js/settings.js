@@ -178,6 +178,17 @@ export class Settings {
       ),
       el("div", { class: "section" },
         toggleRow("Smart titles", "Ask the model for a short title after the first reply.", value("smart_titles"), (v) => savePrefs({ smart_titles: v })),
+        toggleRow("Desktop notifications", "Reminders, automations and notify requests appear as system notifications while this tab is in the background.", state.ui.desktopNotify, async (v) => {
+          if (v && "Notification" in window && Notification.permission !== "granted") {
+            const result = await Notification.requestPermission();
+            if (result !== "granted") {
+              toast("Notifications are blocked for this site in your browser settings.", { type: "error" });
+              this.refresh();
+              return;
+            }
+          }
+          setUi("desktopNotify", v);
+        }),
       ),
     );
   }

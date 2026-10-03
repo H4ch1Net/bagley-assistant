@@ -249,3 +249,27 @@ def test_registry_enabled_filter():
     reg.add(a)
     assert reg.enabled(["a"]) == []
     assert reg.enabled() == [a]
+
+
+@pytest.mark.anyio
+async def test_system_status(ctx):
+    import json
+
+    data = json.loads(await build_registry(ctx.config).get("system_status").invoke({"top": 3}, ctx))
+    assert 0 <= data["cpu_percent"] <= 100 * data["cpu_cores"]
+    assert data["memory"]["total_gb"] > 0
+    assert len(data["top_memory"]) <= 3
+
+
+@pytest.mark.anyio
+async def test_open_on_computer(ctx, monkeypatch):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url) or True)
+    tool = build_registry(ctx.config).get("open_on_computer")
+    assert tool.risk == "confirm"
+    assert "Opened" in await tool.invoke({"target": "https://example.com"}, ctx)
+    assert opened == ["https://example.com"]
+    with pytest.raises(ToolError, match="Only http"):
+        await tool.invoke({"target": "file:///etc/passwd"}, ctx)
+    with pytest.raises(ToolError, match="does not exist"):
+        await tool.invoke({"target": "nope.txt"}, ctx)

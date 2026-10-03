@@ -149,6 +149,7 @@ async function route() {
   try {
     const data = await api.get(`/api/conversations/${id}`);
     state.activeId = id;
+    sidebar.update({ id, unread: 0 });
     chat.render(data.messages);
     setTitle(data.conversation.title);
     const last = [...data.messages].reverse().find((m) => m.role === "assistant" && m.meta?.model);
@@ -215,6 +216,24 @@ socket.on("conversation", (ev) => {
     sidebar.render();
   }
 });
+
+socket.on("notification", (ev) => {
+  const open = ev.conversation_id ? { label: "Open", run: () => navigate(ev.conversation_id) } : undefined;
+  toast(ev.body ? `${ev.title}: ${ev.body}` : ev.title, { action: open, type: ev.level === "error" ? "error" : "info", duration: 9000 });
+  avatars.pulse(1);
+  announce(`${ev.title}. ${ev.body || ""}`);
+  if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) {
+    const n = new Notification(ev.title, { body: ev.body || "", icon: "/static/favicon.svg", tag: ev.conversation_id || undefined });
+    n.onclick = () => {
+      focus();
+      if (ev.conversation_id) navigate(ev.conversation_id);
+      n.close();
+    };
+  }
+  sidebar.refresh();
+});
+
+socket.on("conversations.changed", () => sidebar.refresh());
 
 socket.on("title", (ev) => {
   sidebar.update({ id: ev.conversation_id, title: ev.title });

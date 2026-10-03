@@ -268,3 +268,15 @@ def test_vllm_without_tool_parser_triggers_text_mode():
         "m",
     )
     assert isinstance(err, ToolsUnsupportedError)
+
+
+async def test_notify_marks_unread_without_open_windows(make_runtime, recorder, mock):
+    rt = make_runtime()
+    mock.script = [
+        Reply(tool_calls=[("notify_user", {"title": "Done", "message": "All set"})]),
+        Reply(text="ok"),
+    ]
+    await run(rt, recorder, "tell me when done")
+    cid = recorder.of("conversation")[0]["conversation"]["id"]
+    assert "marked unread" in recorder.of("tool.end")[0]["result"]
+    assert rt.store.get_conversation(cid)["unread"] == 1

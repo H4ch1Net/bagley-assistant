@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import httpx
@@ -41,6 +42,7 @@ class Runtime:
         self.llm_transport = llm_transport
         self.prompt_mode_models: set[str] = set()
         self.busy: set[str] = set()  # Conversations with a run in progress.
+        self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
@@ -141,6 +143,33 @@ class Runtime:
             info["error"] = exc.message
             info["hint"] = exc.hint
         return info
+
+    # Events to every open window ------------------------------------------------------------
+
+    async def broadcast(self, event: dict[str, Any]) -> int:
+        delivered = 0
+        for listener in list(self.listeners):
+            with contextlib.suppress(Exception):
+                await listener(event)
+                delivered += 1
+        return delivered
+
+    async def notify(
+        self, title: str, body: str = "", *, conversation_id: str | None = None, level: str = "info"
+    ) -> int:
+        """Show a notification in every open window. Marks the chat unread if nobody sees it."""
+        delivered = await self.broadcast(
+            {
+                "type": "notification",
+                "title": title,
+                "body": body,
+                "conversation_id": conversation_id,
+                "level": level,
+            }
+        )
+        if conversation_id and not delivered:
+            self.store.set_unread(conversation_id, True)
+        return delivered
 
     def tool_context(self, conversation_id: str | None = None) -> ToolContext:
         return ToolContext(

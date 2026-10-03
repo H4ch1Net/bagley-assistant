@@ -338,6 +338,13 @@ kbd {
 }
 .conv-item.active .conv-link, .conv-item:hover .conv-link { color: var(--text); }
 .conv-item .running { margin-right: 8px; color: var(--accent); }
+.conv-item.unread .conv-link { color: var(--text); font-weight: 600; }
+.conv-item.unread::after {
+  content: ""; position: absolute; right: 10px; top: 50%;
+  width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%;
+  background: var(--accent); pointer-events: none;
+}
+.conv-item.unread:hover::after, .conv-item.unread:focus-within::after { opacity: 0; }
 .conv-actions {
   position: absolute; right: 0; top: 0; bottom: 0;
   display: flex; align-items: center; gap: 2px; padding: 0 4px 0 24px;

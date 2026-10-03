@@ -97,7 +97,7 @@ export class Sidebar {
       "aria-current": active ? "page" : null,
       onclick: () => this.onOpen(conv.id),
     }, conv.title);
-    const node = el("div", { class: `conv-item${active ? " active" : ""}`, dataset: { id: conv.id } },
+    const node = el("div", { class: `conv-item${active ? " active" : ""}${conv.unread && !active ? " unread" : ""}`, dataset: { id: conv.id } },
       link,
       running ? el("span", { class: "spinner running", title: "Working…" }) : null,
       el("div", { class: "conv-actions" },

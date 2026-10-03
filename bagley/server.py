@@ -171,6 +171,8 @@ class ChatSession:
         return decision in ("allow", "always")
 
     async def serve(self) -> None:
+        runtime = self.agent.rt
+        runtime.listeners.add(self.emit)
         try:
             while True:
                 try:
@@ -182,6 +184,7 @@ class ChatSession:
         except WebSocketDisconnect:
             pass
         finally:
+            runtime.listeners.discard(self.emit)
             if self.task and not self.task.done():
                 self.task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

@@ -7,15 +7,17 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from bagley.server import create_app
+from tests.mock_llm import Reply
 
 WS = "ws://localhost/api/ws"  # The test client defaults to Host "testserver", which the guard rejects.
 
 
 @pytest.fixture
-def client(make_runtime):
+def client(make_runtime, mock):
     rt = make_runtime(env={"BAGLEY_PERSONA": "bagley"})
     with TestClient(create_app(rt), base_url="http://localhost") as c:
         c.runtime = rt
+        c.mock = mock
         yield c
 
 
@@ -102,6 +104,18 @@ def test_websocket_chat_and_conversation_api(client):
     assert client.get(f"/api/conversations/{cid}").status_code == 404
     assert client.post(f"/api/conversations/{cid}/restore").status_code == 200
     assert client.get(f"/api/conversations/{cid}").status_code == 200
+
+
+def test_notifications_reach_open_windows(client):
+    with client.websocket_connect(WS) as ws:
+        client.mock.script = [
+            Reply(tool_calls=[("notify_user", {"title": "Hey", "message": "Ping"})]),
+            Reply(text="ok"),
+        ]
+        events = chat(ws, text="notify me")
+    note = next(e for e in events if e["type"] == "notification")
+    assert note["title"] == "Hey" and note["body"] == "Ping"
+    assert note["conversation_id"] == events[0]["conversation"]["id"]
 
 
 def test_websocket_approval_flow(client):

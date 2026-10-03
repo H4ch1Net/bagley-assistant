@@ -26,6 +26,7 @@ export const state = {
     theme: storage.get("theme", "system"),
     accent: storage.get("accent", 188),
     reduceMotion: storage.get("reduceMotion", false),
+    desktopNotify: storage.get("desktopNotify", false),
   },
 };
 
