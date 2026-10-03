@@ -1,0 +1,296 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from bagley.server import create_app
+from tests.mock_llm import Reply
+
+BROADCASTS = {"knowledge.changed", "automations.changed", "conversations.changed"}
+WS = "ws://localhost/api/ws"  # The test client defaults to Host "testserver", which the guard rejects.
+
+
+@pytest.fixture
+def client(make_runtime, mock):
+    rt = make_runtime(env={"BAGLEY_PERSONA": "bagley"})
+    with TestClient(create_app(rt), base_url="http://localhost") as c:
+        c.runtime = rt
+        c.mock = mock
+        yield c
+
+
+def receive(ws):
+    """Next event for this window, skipping background broadcasts."""
+    while (event := json.loads(ws.receive_text()))["type"] in BROADCASTS:
+        pass
+    return event
+
+
+def chat(ws, **message):
+    ws.send_text(json.dumps({"type": "chat", **message}))
+    events = []
+    while True:
+        event = receive(ws)
+        events.append(event)
+        if event["type"] == "approval.request":
+            ws.send_text(
+                json.dumps({"type": "approval", "id": event["call"]["id"], "decision": "allow"})
+            )
+        if event["type"] == "run.end":
+            return events
+
+
+def test_index_and_static(client):
+    page = client.get("/")
+    assert page.status_code == 200 and "Bagley" in page.text and "{{version}}" not in page.text
+    assert client.get("/static/js/main.js").status_code == 200
+    csp = page.headers["content-security-policy"]
+    assert "img-src 'self' data:" in csp and "'sha256-" in csp and "frame-ancestors 'none'" in csp
+
+
+def test_health_and_models(client):
+    health = client.get("/api/health").json()
+    assert health["ok"] and health["provider"] == "ollama" and health["models"] == 3
+    assert health["capabilities"]["tools"] is True
+    models = client.get("/api/models").json()
+    assert models["can_pull"] and {m["name"] for m in models["models"]} >= {"qwen3:8b"}
+
+
+def test_preferences(client):
+    body = client.get("/api/preferences").json()
+    assert body["locked"] == ["persona"]
+    assert "api_key" not in body["values"] and body["values"]["has_api_key"] is False
+
+    updated = client.put(
+        "/api/preferences", json={"temperature": 1.1, "persona": "concise", "api_key": "sk"}
+    ).json()
+    assert updated["values"]["temperature"] == 1.1
+    assert updated["values"]["persona"] == "bagley"  # Locked by the environment.
+    assert updated["values"]["has_api_key"] is True
+
+    # Moving to another server drops the saved key, so it can't be sent to an attacker's host.
+    moved = client.put("/api/preferences", json={"base_url": "http://elsewhere:9000"}).json()
+    assert moved["values"]["has_api_key"] is False
+
+    bad = client.put("/api/preferences", json={"temperature": 5})
+    assert bad.status_code == 422 and "temperature" in bad.json()["detail"]
+
+
+def test_websocket_chat_and_conversation_api(client):
+    with client.websocket_connect(WS) as ws:
+        events = chat(ws, text="What's the weather in Lisbon?")
+    types = [e["type"] for e in events]
+    assert types[:2] == ["conversation", "run.start"]
+    assert "tool.end" in types and types[-1] == "run.end"
+    cid = events[0]["conversation"]["id"]
+
+    listed = client.get("/api/conversations").json()
+    assert listed[0]["id"] == cid
+    assert client.get("/api/conversations", params={"q": "lisbon"}).json()[0]["id"] == cid
+    assert client.get("/api/conversations", params={"q": "zzz"}).json() == []
+
+    detail = client.get(f"/api/conversations/{cid}").json()
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant", "tool", "assistant"]
+
+    assert (
+        client.patch(f"/api/conversations/{cid}", json={"title": "Renamed"}).json()["title"]
+        == "Renamed"
+    )
+    export = client.get(f"/api/conversations/{cid}/export")
+    assert 'filename="Renamed.md"' in export.headers["content-disposition"]
+    assert "Used `get_weather`" in export.text
+    client.patch(f"/api/conversations/{cid}", json={"title": "Météo à Lisbonne 天气"})
+    unicode_export = client.get(f"/api/conversations/{cid}/export")
+    assert unicode_export.status_code == 200
+    assert "filename*=UTF-8''M%C3%A9t%C3%A9o" in unicode_export.headers["content-disposition"]
+    assert client.get("/api/conversations", params={"q": "Lisbon_"}).json() == []  # "_" is literal
+
+    assert client.delete(f"/api/conversations/{cid}").status_code == 204
+    assert client.get(f"/api/conversations/{cid}").status_code == 404
+    assert client.post(f"/api/conversations/{cid}/restore").status_code == 200
+    assert client.get(f"/api/conversations/{cid}").status_code == 200
+
+
+def test_notifications_reach_open_windows(client):
+    with client.websocket_connect(WS) as ws:
+        client.mock.script = [
+            Reply(tool_calls=[("notify_user", {"title": "Hey", "message": "Ping"})]),
+            Reply(text="ok"),
+        ]
+        events = chat(ws, text="notify me")
+    note = next(e for e in events if e["type"] == "notification")
+    assert note["title"] == "Hey" and note["body"] == "Ping"
+    assert note["conversation_id"] == events[0]["conversation"]["id"]
+
+
+def test_websocket_approval_flow(client):
+    with client.websocket_connect(WS) as ws:
+        events = chat(ws, text="Write a note about the trip")
+    assert any(e["type"] == "approval.request" for e in events)
+    assert (client.runtime.config.workspace / "trip" / "lisbon.md").exists()
+
+
+def test_websocket_rejects_concurrent_runs_and_bad_json(client):
+    with client.websocket_connect(WS) as ws:
+        ws.send_text("not json")
+        assert receive(ws)["message"] == "Malformed message."
+        ws.send_text(json.dumps({"type": "ping"}))
+        assert receive(ws)["type"] == "pong"
+
+
+def test_memories_and_tools(client):
+    created = client.post("/api/memories", json={"content": "Uses metric"}).json()
+    assert client.get("/api/memories").json()[0]["content"] == "Uses metric"
+    assert client.delete(f"/api/memories/{created['id']}").status_code == 204
+    assert client.delete(f"/api/memories/{created['id']}").status_code == 404
+
+    tools = client.get("/api/tools").json()
+    names = {t["name"] for t in tools["tools"]}
+    assert {"web_search", "write_file", "remember"} <= names
+    assert "run_command" not in names
+
+
+def test_upload_into_workspace(client):
+    first = client.put("/api/workspace/uploads/notes.txt", content=b"hello")
+    assert first.status_code == 201 and first.json() == {"path": "uploads/notes.txt", "size": 5}
+    second = client.put("/api/workspace/uploads/notes.txt", content=b"again")
+    assert second.json()["path"] == "uploads/notes-2.txt"
+    assert (
+        client.put("/api/workspace/uploads/..%2F..%2Fescape.txt", content=b"x").status_code == 404
+    )
+    assert (
+        client.put("/api/workspace/uploads/..evil$.txt", content=b"x").json()["path"]
+        == "uploads/evil_.txt"
+    )
+    assert (client.runtime.config.workspace / "uploads" / "notes.txt").read_text() == "hello"
+    too_big = client.put("/api/workspace/uploads/big.bin", content=b"0" * 5_000_001)
+    assert too_big.status_code == 413
+
+
+def test_model_pull_streams_progress(client):
+    with client.stream("POST", "/api/models/pull", json={"name": "tiny:1b"}) as resp:
+        lines = [json.loads(line) for line in resp.iter_lines() if line]
+    assert lines[-1]["status"] == "success"
+    assert any(line.get("completed") == 500 for line in lines)
+
+
+def test_guard_blocks_rebinding_and_cross_origin(client):
+    assert client.get("/api/health", headers={"host": "evil.example"}).status_code == 400
+    blocked = client.put("/api/preferences", json={}, headers={"origin": "http://evil.example"})
+    assert blocked.status_code == 403
+    allowed = client.put("/api/preferences", json={}, headers={"origin": "http://localhost"})
+    assert allowed.status_code == 200
+    with (
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect(WS, headers={"origin": "http://evil.example"}),
+    ):
+        pass
+
+
+def test_env_api_key_locks_server_url(make_runtime):
+    rt = make_runtime(env={"BAGLEY_API_KEY": "sk-env"})
+    with TestClient(create_app(rt), base_url="http://localhost") as c:
+        body = c.put("/api/preferences", json={"base_url": "http://attacker:9000"}).json()
+        assert {"api_key", "base_url", "provider"} <= set(body["locked"])
+        assert body["locked_by"]["base_url"] == "BAGLEY_API_KEY"
+        assert body["values"]["base_url"] == "http://mock"
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="symlinks need privileges on Windows")
+def test_upload_never_writes_through_symlinks(client, tmp_path):
+    uploads = client.runtime.config.workspace / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.txt"
+    (uploads / "notes.txt").symlink_to(outside)  # Dangling link pointing out of the workspace.
+    resp = client.put("/api/workspace/uploads/notes.txt", content=b"data")
+    assert resp.json()["path"] == "uploads/notes-2.txt"
+    assert not outside.exists()
+
+
+def test_token_auth(make_runtime):
+    rt = make_runtime()
+    rt.config.token = "s3cret"
+    with TestClient(create_app(rt), base_url="http://localhost") as c:
+        assert c.get("/api/health").status_code == 401
+        login = c.get("/?token=s3cret", follow_redirects=False)
+        assert login.status_code == 303 and "bagley_token=s3cret" in login.headers["set-cookie"]
+        assert c.get("/api/health").status_code == 200  # Cookie now set.
+        c.cookies.clear()
+        assert c.get("/api/health").status_code == 401
+        junk = {"cookie": 'ui_state={"sidebar": true}; bagley_token=s3cret'}
+        assert c.get("/api/health", headers=junk).status_code == 200
+        assert (
+            c.get(
+                "/api/health", headers={"authorization": "Bearer é".encode("latin-1")}
+            ).status_code
+            == 401
+        )
+        assert c.get("/api/health", headers={"authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_automations_api(client):
+    preview = client.get("/api/automations/preview", params={"schedule": "weekdays at 9:00"}).json()
+    assert preview["description"] == "Weekdays at 09:00"
+    bad = client.get("/api/automations/preview", params={"schedule": "whenever"})
+    assert bad.status_code == 422 and "Couldn't understand" in bad.json()["detail"]
+
+    created = client.post(
+        "/api/automations",
+        json={
+            "kind": "task",
+            "name": "Briefing",
+            "prompt": "Weather in Lisbon?",
+            "schedule": "daily at 08:00",
+        },
+    ).json()
+    assert created["schedule_text"] == "Every day at 08:00" and created["enabled"] is True
+    assert (
+        client.post(
+            "/api/automations", json={"kind": "watch", "schedule": "hourly", "target": "ftp://x"}
+        ).status_code
+        == 422
+    )
+
+    paused = client.patch(f"/api/automations/{created['id']}", json={"enabled": False}).json()
+    assert paused["enabled"] is False
+    resumed = client.patch(
+        f"/api/automations/{created['id']}", json={"enabled": True, "schedule": "every 2 hours"}
+    ).json()
+    assert resumed["schedule_text"] == "Every 2 hours"
+
+    with client.websocket_connect(WS) as ws:
+        assert client.post(f"/api/automations/{created['id']}/run").status_code == 202
+        events = []
+        while not any(e["type"] == "notification" for e in events):
+            events.append(json.loads(ws.receive_text()))
+    done = client.get("/api/automations").json()[0]
+    assert done["last_status"] == "ok" and done["conversation_id"]
+    assert client.delete(f"/api/automations/{created['id']}").status_code == 204
+    assert client.get("/api/automations").json() == []
+
+
+def test_model_manager(client):
+    assert [m["name"] for m in client.get("/api/models/loaded").json()] == ["qwen3:8b"]
+    assert client.post("/api/models/unload", json={"name": "qwen3:8b"}).json() == {"ok": True}
+    assert client.get("/api/models/loaded").json() == []
+
+    client.put("/api/preferences", json={"model": "llama3.2:3b"})
+    assert client.delete("/api/models/llama3.2:3b").status_code == 204
+    assert "llama3.2:3b" not in [m["name"] for m in client.get("/api/models").json()["models"]]
+    assert client.get("/api/preferences").json()["values"]["model"] == ""
+    assert client.delete("/api/models/llama3.2:3b").status_code == 404
+
+
+def test_workspace_images_are_served_safely(client, tmp_path):
+    ws = client.runtime.config.workspace
+    (ws / "charts").mkdir(parents=True, exist_ok=True)
+    (ws / "charts" / "a.png").write_bytes(b"\x89PNG\r\n")
+    (ws / "notes.md").write_text("secret")
+    (tmp_path / "outside.png").write_bytes(b"\x89PNG")
+    ok = client.get("/api/workspace/raw", params={"path": "charts/a.png"})
+    assert ok.status_code == 200 and ok.headers["content-type"] == "image/png"
+    for bad in ("notes.md", "../outside.png", "/../outside.png", "charts/missing.png", "."):
+        assert client.get("/api/workspace/raw", params={"path": bad}).status_code == 404

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bagley</title>
+  <meta name="description" content="Bagley, a local-first AI assistant.">
+  <meta name="theme-color" content="#090b0f">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
+  <script>
+    // Apply theme before first paint to avoid a flash.
+    (function () {
+      var get = function (k, d) { try { var v = localStorage.getItem("bagley." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
+      var theme = get("theme", "system");
+      if (theme === "system") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      var root = document.documentElement;
+      root.dataset.theme = theme;
+      var hue = get("accent", 188);
+      root.style.setProperty("--accent-h", hue);
+      root.style.setProperty("--accent-l", hue >= 230 && hue <= 290 ? "70%" : "62%");
+      if (get("reduceMotion", false)) root.classList.add("reduce-motion");
+    })();
+  </script>
+  <script type="module" src="/static/js/main.js?v={{version}}"></script>
+</head>
+<body>
+  <a class="skip-link" href="#composer-input">Skip to message box</a>
+
+  <div class="app presence-open" id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Chats">
+      <div class="sidebar-head">
+        <div class="brand"><canvas data-avatar="mini" aria-hidden="true"></canvas><span>Bagley</span></div>
+        <button class="icon-btn only-mobile" id="sidebar-close" aria-label="Close sidebar"><svg class="icon"><use href="/static/icons.svg#i-x"/></svg></button>
+      </div>
+      <button class="btn btn-primary new-chat" id="new-chat" title="New chat">
+        <svg class="icon"><use href="/static/icons.svg#i-plus"/></svg> New chat <kbd data-kbd="mod+shift+o"></kbd>
+      </button>
+      <label class="search">
+        <svg class="icon icon-sm"><use href="/static/icons.svg#i-search"/></svg>
+        <input id="search" type="search" placeholder="Search chats" aria-label="Search chats" autocomplete="off">
+        <kbd data-kbd="mod+k"></kbd>
+      </label>
+      <nav class="conv-list" id="conv-list" aria-label="Chat history"></nav>
+      <div class="sidebar-foot">
+        <button class="conn" id="conn-status" title="Model server status">
+          <span class="dot" id="conn-dot"></span><span class="conn-label" id="conn-label">Connecting…</span>
+        </button>
+        <button class="icon-btn" id="automations-btn" aria-label="Automations" title="Automations"><svg class="icon"><use href="/static/icons.svg#i-calendar-clock"/></svg></button>
+        <button class="icon-btn" id="settings-btn" aria-label="Settings" title="Settings"><svg class="icon"><use href="/static/icons.svg#i-settings"/></svg></button>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main" id="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="sidebar-open" aria-label="Open sidebar"><svg class="icon"><use href="/static/icons.svg#i-menu"/></svg></button>
+        <canvas class="topbar-avatar" data-avatar="compact" aria-hidden="true"></canvas>
+        <div class="title-wrap">
+          <h1 class="conv-title" id="conv-title"><button type="button" id="title-btn" title="Rename chat" disabled>New chat</button></h1>
+          <div class="tb-status" id="tb-status" aria-hidden="true">Ready</div>
+        </div>
+        <div class="model-picker" id="model-picker">
+          <button class="model-btn" id="model-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch model">
+            <svg class="icon icon-sm"><use href="/static/icons.svg#i-cpu"/></svg><span id="model-name">Model</span><svg class="icon icon-xs"><use href="/static/icons.svg#i-chevron-down"/></svg>
+          </button>
+        </div>
+        <button class="icon-btn" id="export-btn" aria-label="Export chat as Markdown" title="Export chat as Markdown" disabled><svg class="icon"><use href="/static/icons.svg#i-download"/></svg></button>
+        <button class="icon-btn" id="presence-toggle" aria-label="Show Bagley panel" aria-pressed="true" title="Toggle Bagley panel"><svg class="icon"><use href="/static/icons.svg#i-panel-right"/></svg></button>
+      </header>
+
+      <section class="thread" id="thread">
+        <div class="empty" id="empty">
+          <canvas class="hero-avatar" data-avatar="hero" aria-hidden="true"></canvas>
+          <h2 id="greeting">Good evening</h2>
+          <p>Ask anything. Bagley can search the web, read pages, check the weather, do exact maths, work with files in your workspace and remember what matters to you.</p>
+          <div class="suggestions" id="suggestions"></div>
+          <div class="setup" id="setup" hidden></div>
+        </div>
+        <div class="thread-inner" id="messages" role="log" aria-label="Conversation" hidden></div>
+      </section>
+      <button class="jump" id="jump" hidden><svg class="icon icon-sm"><use href="/static/icons.svg#i-arrow-down"/></svg>Jump to latest</button>
+
+      <footer class="composer-wrap">
+        <form class="composer" id="composer" autocomplete="off">
+          <div class="attachments" id="attachments" hidden></div>
+          <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="Attach text files" title="Attach text files (saved to your workspace)"><svg class="icon"><use href="/static/icons.svg#i-paperclip"/></svg></button>
+          <input type="file" id="file-input" multiple hidden>
+          <textarea id="composer-input" rows="1" placeholder="Message Bagley…" aria-label="Message Bagley" enterkeyhint="send"></textarea>
+          <div class="composer-actions">
+            <button type="button" class="icon-btn mic-btn" id="mic-btn" aria-label="Voice input" title="Voice input (uses your browser's speech service)" hidden><svg class="icon"><use href="/static/icons.svg#i-mic"/></svg></button>
+            <button type="submit" class="send-btn" id="send-btn" aria-label="Send message" title="Send (Enter)" disabled><svg class="icon"><use href="/static/icons.svg#i-arrow-up"/></svg></button>
+          </div>
+        </form>
+        <div class="composer-hint">
+          <span class="keys"><kbd>Enter</kbd> send · <kbd>Shift</kbd> <kbd>Enter</kbd> new line · <kbd>Esc</kbd> stop · <kbd>?</kbd> shortcuts</span>
+          <span class="privacy" id="privacy"></span>
+        </div>
+      </footer>
+    </main>
+
+    <aside class="presence" id="presence" aria-label="Bagley status">
+      <div class="presence-inner">
+        <div class="presence-stage">
+          <canvas data-avatar="stage" aria-hidden="true"></canvas>
+          <div class="presence-name">Bagley</div>
+          <div class="presence-state" id="presence-state" data-state="idle" role="status">Idle</div>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="presence-foot" id="presence-foot"></div>
+      </div>
+    </aside>
+  </div>
+
+  <dialog class="dialog dialog-lg" id="settings-dialog" aria-labelledby="settings-title"></dialog>
+  <dialog class="dialog" id="shortcuts-dialog" aria-labelledby="shortcuts-title"></dialog>
+  <dialog class="dialog" id="confirm-dialog"></dialog>
+  <div class="toasts" id="toasts"></div>
+  <div class="sr-only" id="announcer" aria-live="polite"></div>
+</body>
+</html>
