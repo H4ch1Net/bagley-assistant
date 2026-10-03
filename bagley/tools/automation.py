@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from bagley.automations import ScheduleError
 from bagley.tools import ToolContext, ToolError, tool
 
-WHEN_HELP = "e.g. 'in 20 minutes', 'at 18:30', 'every 2 hours', 'daily at 08:00', 'weekdays at 9:00', 'mondays at 10:00'"
+WHEN_HELP = "e.g. 'in 20 minutes', 'at 18:30', 'tomorrow at 9am', 'every 2 hours', 'daily at 08:00', 'weekdays at 9:00', 'mondays at 10:00'"
 
 
 def _scheduler(ctx: ToolContext) -> Any:

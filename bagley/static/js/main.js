@@ -526,7 +526,7 @@ function automationText() {
   const active = state.automations.filter((a) => a.enabled && a.next_run);
   if (!active.length) return "None";
   const next = Math.min(...active.map((a) => a.next_run));
-  return `${active.length} active · ${relTime(next)}`;
+  return `${active.length} · ${relTime(next)}`;
 }
 
 function isLocalServer() {

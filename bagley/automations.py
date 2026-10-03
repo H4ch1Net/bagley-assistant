@@ -137,10 +137,11 @@ def parse_schedule(text: str, now: datetime | None = None) -> Schedule:
         except ValueError as exc:
             raise ScheduleError(f"'{text}' is not a valid date.") from exc
         return Schedule("once", at=at.replace(tzinfo=now.tzinfo))
-    if m := re.fullmatch(r"(?:at )?(\d{1,2}(?::\d{2})? ?(?:am|pm)?)(?: today| tomorrow)?", s):
-        hour, minute = _clock(m.group(1))
+    clock = r"(?:(today|tomorrow) )?(?:at )?(\d{1,2}(?::\d{2})? ?(?:am|pm)?)(?: (today|tomorrow))?"
+    if m := re.fullmatch(clock, s):
+        hour, minute = _clock(m.group(2))
         at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if s.endswith("tomorrow") or at <= now:
+        if "tomorrow" in (m.group(1), m.group(3)) or at <= now:
             at += timedelta(days=1)
         return Schedule("once", at=at)
     if s in ("hourly", "every hour"):

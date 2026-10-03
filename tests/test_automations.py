@@ -18,6 +18,13 @@ NOW = datetime(2026, 10, 3, 14, 5).astimezone()  # A Saturday.
     [
         ("in 20 minutes", "at 2026-10-03 14:25", "Once, Sat 03 Oct 14:25", "2026-10-03 14:25"),
         ("at 9am", "at 2026-10-04 09:00", "Once, Sun 04 Oct 09:00", "2026-10-04 09:00"),
+        ("tomorrow at 16:00", "at 2026-10-04 16:00", "Once, Sun 04 Oct 16:00", "2026-10-04 16:00"),
+        (
+            "mondays, thursdays at 18:00",
+            "mon,thu at 18:00",
+            "Mon, Thu at 18:00",
+            "2026-10-05 18:00",
+        ),
         ("every 2 hours", "every 120 minutes", "Every 2 hours", "2026-10-03 16:05"),
         (
             "every day at 7:30",

@@ -20,6 +20,8 @@ Runs on Ollama or any OpenAI-compatible model server. Your conversations stay on
 
 Bagley is a personal assistant that runs against a model on your own computer. It is agentic: the model can call tools (search the web, read pages, check the weather, do exact maths, work with files, remember facts about you), look at the results and keep going until it has an answer. Actions that change things ask for your approval first.
 
+Because it runs on your machine, it can do things a hosted chat app cannot. It keeps working when no window is open: reminders, scheduled tasks and page watchers run in the background and notify you. It searches your own documents by meaning, not just keywords. It edits files with a diff and a one-click undo, runs Python and shows the charts inline, and can check what is slowing your computer down.
+
 It is a single Python package with no build step. The server is FastAPI, the UI is plain JavaScript, and everything is stored in one SQLite file.
 
 ## Features
@@ -30,13 +32,20 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 | **Local models** | Native Ollama support (context size, reasoning, one-click model downloads) and any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, LocalAI, Jan, OpenRouter, OpenAI. |
 | **Agent loop** | Multi-step tool calling with streaming, cancellation, step limits and approvals. Models without native function calling use a text-based tool protocol automatically. |
 | **Built-in tools** | Web search, page reader, weather, calculator, time zones, workspace files, long-term memory, optional shell. |
+| **Automations** | Reminders, scheduled tasks ("weekdays at 8:00, give me the weather and my calendar notes") and web page watchers ("tell me when this price drops"). They run in the background, post into their own chat and notify you, also as a desktop notification. Create them in chat or under **Settings → Automations**. |
+| **Knowledge base** | Indexes your workspace and any folders you add (text, Markdown, code, HTML, PDF) into a local full-text index. With an embedding model installed (`ollama pull nomic-embed-text`) it also searches by meaning. Answers cite the files they came from. |
+| **Undoable file changes** | Every write, edit, move and delete is journaled. Tool cards show a diff, and **Revert** restores the previous version. Deleted files are kept in the journal, not destroyed. |
+| **Python and charts** | `run_python` runs a script in the workspace (after approval) and shows any chart or image it produces inline in the chat. Use it on your CSV and Excel files. |
+| **Your computer** | Live CPU, memory, disk, battery and top processes, opening pages and files on your screen, and notifications. |
+| **Small-model friendly** | Tools load on demand: core tools are always sent and the rest join when the conversation needs them, which roughly halves the prompt for small models. |
+| **Model manager** | See which models are installed and which are in memory, and unload or delete them from **Settings → Model** (Ollama). |
 | **Extensible** | Drop a Python file into the plugins folder, or connect any MCP (Model Context Protocol) server. |
 | **Reasoning models** | Thinking from qwen3, deepseek-r1 or gpt-oss streams into a collapsible block, separate from the answer. |
 | **Chat history** | Search, rename, delete with undo, Markdown export, edit and resend, regenerate, deep links. |
 | **Attachments** | Drop text files on the composer. They are saved to the workspace where the file tools can read them. |
 | **Voice** | Read replies aloud with your system voices (the tracked blobs pulse with each word). Optional dictation where the browser supports it. |
 | **Interface** | Dark and light themes, accent colours, keyboard shortcuts, responsive down to phone width, reduced-motion support, a tab-title marker when a reply finishes in the background. |
-| **Terminal** | `bagley chat` for a terminal session and `bagley doctor` to check your setup. |
+| **Terminal** | `bagley chat` for a terminal session, `bagley ask` for scripts and pipes, `bagley doctor` to check your setup. |
 
 ## Quick start
 
@@ -68,11 +77,19 @@ This opens <http://127.0.0.1:8765>. If no model server is found, the start scree
 
 <table>
   <tr>
+    <td width="50%"><img src="docs/screenshots/chart.png" alt="A chart made by run_python shown inside the chat"><br><sub>Python runs in the workspace and its charts appear in the chat.</sub></td>
+    <td width="50%"><img src="docs/screenshots/diff.png" alt="A file edit with a diff and a Revert button"><br><sub>File changes show a diff and can be reverted.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/automations.png" alt="Automations settings with a scheduled task, a reminder and a page watcher"><br><sub>Scheduled tasks, reminders and page watchers.</sub></td>
+    <td><img src="docs/screenshots/knowledge.png" alt="Knowledge settings with indexed folders and search results"><br><sub>Knowledge base with keyword and semantic search.</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><img src="docs/screenshots/approval.png" alt="Approval prompt before writing a file"><br><sub>Actions that change things wait for approval.</sub></td>
     <td width="50%"><img src="docs/screenshots/empty.png" alt="Start screen with suggestions"><br><sub>Start screen.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/settings.png" alt="Model settings"><br><sub>Model settings. Server type, URL, model, context and tool mode.</sub></td>
+    <td><img src="docs/screenshots/settings.png" alt="Model settings"><br><sub>Model settings, installed models and what is loaded in memory.</sub></td>
     <td><img src="docs/screenshots/onboarding.png" alt="Setup card when no model server is running"><br><sub>First run without a model server. The tracker reads NO SIGNAL.</sub></td>
   </tr>
   <tr>
@@ -108,6 +125,7 @@ On macOS use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | `bagley` | Start the server and open the browser. Same as `bagley serve`. |
 | `bagley serve --port 9000 --no-browser` | Start on another port without opening a tab. `--host` sets the bind address. |
 | `bagley chat` | Chat in the terminal. `-c <id>` continues a conversation. Approvals are asked inline. |
+| `bagley ask "question"` | Print one answer to stdout. Piped input is attached, so `git diff \| bagley ask "write a commit message"` works. Tools that need approval only run with `--yes`; `-q` hides tool activity. |
 | `bagley doctor` | Check the model server, installed models, tool support, workspace, plugins and MCP servers. |
 | `python -m bagley` | Same as `bagley`. |
 
@@ -121,11 +139,28 @@ On macOS use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | `calculate` | Exact arithmetic and math functions, evaluated safely | |
 | `get_current_time` | Date and time in any time zone | |
 | `list_files` `read_file` `search_files` | Browse and read the workspace folder | |
-| `write_file` | Create or change a file in the workspace | ✓ |
+| `write_file` `edit_file` `move_file` `delete_file` | Change files in the workspace. Journaled and revertible | ✓ |
+| `make_directory` | Create a folder in the workspace | |
+| `search_knowledge` `read_document` | Search and read your indexed documents | |
 | `remember` `forget` | Long-term memory, injected into every conversation | |
-| `run_command` | Run a shell command in the workspace. Off unless `BAGLEY_ENABLE_SHELL=true` | ✓ |
+| `set_reminder` `list_automations` `cancel_automation` | Reminders and managing automations | |
+| `schedule_task` `watch_webpage` | Create a recurring task or a page watcher | ✓ |
+| `system_status` | CPU, memory, disk, battery, uptime and the busiest processes | |
+| `open_on_computer` | Open a web page or a workspace file on your screen | ✓ |
+| `notify_user` | Show a notification | |
+| `run_command` `run_python` | Run a shell command or a Python script in the workspace. Off unless `BAGLEY_ENABLE_SHELL=true` | ✓ |
 
 Tools can be switched off individually in **Settings → Tools**. File tools cannot leave the workspace folder, and web tools refuse localhost and private network addresses unless you allow them.
+
+### Automations
+
+Ask in plain language ("remind me in 20 minutes to check the oven", "every weekday at 8:00 summarise the news on Rust", "watch this page and tell me when the price changes") or use **Settings → Automations**. Schedules accept forms like `in 45 minutes`, `at 18:30`, `tomorrow at 9am`, `every 2 hours`, `daily at 07:30`, `weekdays at 09:00` and `mondays, thursdays at 18:00`.
+
+Automations run while Bagley is running. A run that was missed while it was off happens once at the next start. Unattended runs cannot use tools that need approval; they are denied and the result says so.
+
+### Knowledge base
+
+The workspace is always indexed. Add more folders in **Settings → Knowledge**; the index refreshes every 15 minutes and on demand. Keyword search works out of the box. For search by meaning, install an embedding model (`ollama pull nomic-embed-text`); Bagley picks it up automatically. PDF support needs `pypdf` (`pipx inject bagley-assistant pypdf`, or `pip install -e ".[pdf]"` in a clone).
 
 ## Choosing a model
 
@@ -181,13 +216,14 @@ Settings changed in the UI are stored in the database. Environment variables (or
 | `BAGLEY_WORKSPACE` | `<data dir>/workspace` | Folder the file tools can use |
 | `BAGLEY_PLUGINS_DIR` | `<data dir>/plugins` | Python files with extra tools |
 | `BAGLEY_MCP_CONFIG` | `<data dir>/mcp.json` | MCP server list |
-| `BAGLEY_ENABLE_SHELL` | `false` | Register the `run_command` tool |
+| `BAGLEY_ENABLE_SHELL` | `false` | Register the `run_command` and `run_python` tools |
+| `BAGLEY_PYTHON` | Bagley's own | Python interpreter for `run_python`, e.g. a venv with pandas and matplotlib |
 | `BAGLEY_ALLOW_PRIVATE_URLS` | `false` | Let web tools reach private addresses |
 | `BAGLEY_SEARXNG_URL` | | Use SearXNG for web search |
 
 </details>
 
-Data lives in `~/.bagley`: `bagley.db` (chats, memories, settings), `workspace/`, `plugins/` and `mcp.json`. Deleted chats can be restored with Undo; they are purged on the first start more than 24 hours after deletion.
+Data lives in `~/.bagley`: `bagley.db` (chats, memories, settings, automations, file change journal), `knowledge.db` (search index), `journal/` (previous versions of changed files), `workspace/`, `plugins/` and `mcp.json`. Deleted chats can be restored with Undo; they are purged on the first start more than 24 hours after deletion.
 
 ## Extending
 
@@ -238,7 +274,9 @@ Bagley can act on your behalf, so it is locked down by default:
 - The server rejects foreign `Host` headers (DNS rebinding) and cross-origin requests and WebSocket connections, so other websites cannot drive it.
 - File tools are confined to the workspace folder, symlinks included.
 - Web tools refuse loopback and private network addresses, re-check every redirect, and connect to the exact address they checked, so DNS rebinding can't point them at your network. Downloads are capped in size.
-- `write_file`, `run_command` and untrusted MCP tools wait for your approval. Shell access is off unless you enable it, and stopping a command ends everything it started.
+- File changes, `run_command`, `run_python`, new scheduled tasks and watchers, and untrusted MCP tools wait for your approval. Shell and Python access are off unless you enable them, and stopping a command ends everything it started.
+- Automations run without you watching, so any tool that would need approval is denied during an unattended run.
+- Every file change is journaled with the previous version, so a bad edit can be reverted.
 - A saved API key is cleared when the server URL changes, and a key set through `BAGLEY_API_KEY` locks the server URL, so the key only goes where you configured it.
 - The UI loads nothing from the internet and sends a strict Content-Security-Policy. Model output is sanitized: no images, frames or forms, so a prompt-injected page can't make the browser leak data.
 
@@ -247,8 +285,10 @@ Bagley can act on your behalf, so it is locked down by default:
 ```mermaid
 flowchart LR
   UI["Web UI<br/>vanilla JS, canvas avatar"] <-- "WebSocket events" --> S["FastAPI server"]
-  CLI["bagley chat"] --> A
+  CLI["bagley chat / ask"] --> A
   S --> A["Agent loop"]
+  SC["Scheduler<br/>tasks, reminders, watchers"] --> A
+  S --> SC
   A <--> P{"Provider"}
   P --> O["Ollama /api/chat"]
   P --> OA["OpenAI-compatible /v1"]
@@ -256,6 +296,7 @@ flowchart LR
   T --> B["Built-in tools"]
   T --> PL["Plugins"]
   T --> M["MCP servers"]
+  B --> K[("Knowledge index<br/>FTS5 + embeddings")]
   A --> DB[("SQLite")]
 ```
 
@@ -267,13 +308,17 @@ Each user message starts an agent run. The agent builds the context (persona, da
 ```
 bagley/
 ├── agent.py          Agent loop, context fitting, approvals, cancellation
-├── cli.py            bagley serve | chat | doctor
+├── automations.py    Schedule parser and background scheduler
+├── cli.py            bagley serve | chat | ask | doctor
 ├── config.py         Server config and user preferences (env + database)
+├── journal.py        File change journal, diffs and revert
+├── knowledge.py      Document index: FTS5, embeddings, rank fusion
 ├── mcp.py            MCP stdio client
 ├── prompts.py        Personas, system prompt, text-based tool protocol
-├── runtime.py        Shared state: store, tools, provider, health
+├── runtime.py        Shared state: store, tools, provider, scheduler, notifications
 ├── server.py         HTTP API, WebSocket sessions, security middleware
 ├── store.py          SQLite persistence
+├── toolroute.py      On-demand tool loading
 ├── llm/              Ollama and OpenAI-compatible providers, stream parser
 ├── tools/            Registry, @tool decorator and built-in tools
 └── static/           Web UI (HTML, CSS, JS modules, vendored marked and DOMPurify)
@@ -330,6 +375,18 @@ Use a model with tool support (see the table above). For other models set **Tool
 <summary><b>Replies are slow, or the model forgets earlier messages</b></summary>
 
 Lower the context window for speed or raise it for memory (both in **Settings → Model**). Turn off *Reasoning* for faster answers from thinking models. The Context row in the side panel shows how full the window was on the last reply.
+</details>
+
+<details>
+<summary><b>Knowledge search only matches exact words</b></summary>
+
+Semantic search needs an embedding model. Run `ollama pull nomic-embed-text` (or choose one under **Settings → Knowledge**) and press **Reindex**. With an OpenAI-compatible server, pick an embedding model your server provides.
+</details>
+
+<details>
+<summary><b>run_python can't import pandas or matplotlib</b></summary>
+
+It uses Bagley's own Python by default. Point `BAGLEY_PYTHON` at an interpreter that has your data libraries, for example a virtual environment's `bin/python`.
 </details>
 
 <details>

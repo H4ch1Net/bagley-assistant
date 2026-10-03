@@ -438,9 +438,12 @@ export class Settings {
     const seg = el("div", { class: "segmented", role: "group", "aria-label": "Kind" },
       ...kinds.map(([id, ic, label]) => el("button", { type: "button", "aria-pressed": String(kind === id), onclick: () => { this.newKind = id; this.refresh(); } }, icon(ic, "icon-sm"), label)));
 
+    this.automationBox = el("div", { class: "section" });
     panel.append(
       el("h3", { text: "Automations" }),
       el("p", { class: "lead" }, "Bagley can work on its own while it's running: reminders, scheduled tasks and page watchers. Results arrive as chats and notifications. You can also just ask, e.g. ", el("em", { text: "“every weekday at 8, brief me on the weather and news”" }), "."),
+      // Existing automations come first once there are any; the form follows.
+      state.automations.length ? this.automationBox : null,
       el("div", { class: "section" },
         el("div", { class: "section-title", text: "New" }),
         el("div", { class: "field" }, seg, el("div", { class: "help", text: kinds.find((k) => k[0] === kind)[3] })),
@@ -452,8 +455,7 @@ export class Settings {
       ),
     );
 
-    this.automationBox = el("div", { class: "section" });
-    panel.append(this.automationBox);
+    if (!this.automationBox.parentNode) panel.append(this.automationBox);
     this.renderAutomationList();
   }
 

@@ -269,7 +269,7 @@ def test_create_and_run_a_reminder(page, stack):
     row.locator("[aria-label='Run Stretch now']").click()
     page.locator(".toast >> text=Open").click()
     expect(page.locator(".turn-assistant .prose")).to_contain_text("Reminder: Stand up and stretch")
-    expect(page.locator(".stat").filter(has_text="Automations")).to_contain_text("1 active")
+    expect(page.locator(".stat").filter(has_text="Automations")).to_contain_text("1 · in 4")
 
 
 def test_python_chart_shows_inline(page, stack):
