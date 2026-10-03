@@ -80,6 +80,7 @@ const TOOL_ICONS = {
   search_knowledge: "library",
   read_document: "book-open",
   run_python: "code",
+  load_tools: "plug",
   remember: "bookmark",
   forget: "eraser",
   run_command: "terminal",
@@ -95,7 +96,7 @@ export function toolSummary(name, args = {}, template) {
   const tpl = template ?? toolInfo(name)?.summary ?? "";
   if (!tpl) return name.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
   const short = (v) => {
-    const s = typeof v === "string" ? v : JSON.stringify(v);
+    const s = typeof v === "string" ? v : Array.isArray(v) ? v.join(", ") : JSON.stringify(v);
     return s.length > 64 ? `${s.slice(0, 61)}…` : s;
   };
   return tpl

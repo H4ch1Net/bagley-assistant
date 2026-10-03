@@ -262,6 +262,7 @@ export class Settings {
           field("Max steps per reply", steps, { key: "max_steps", id: "pref-steps", help: "How many tool rounds Bagley may take." }),
         ),
         toggleRow("Reasoning", "Let models that support it think before answering. Slower, often better.", value("think"), (v) => savePrefs({ think: v }), { key: "think" }),
+        toggleRow("Load tools on demand", "Send the core tools every time and the rest (file changes, automations, system, code) only when a chat needs them. Saves context and keeps small models focused.", value("tool_routing"), (v) => savePrefs({ tool_routing: v })),
       ),
     );
     if (locked("model")) modelSelect.disabled = true;

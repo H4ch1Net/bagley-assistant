@@ -15,6 +15,7 @@ from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError
 from bagley.llm.textparse import StreamParser
 from bagley.prompts import TITLE_PROMPT, clean_title, heuristic_title, system_prompt, to_prompt_mode
 from bagley.runtime import Runtime
+from bagley.toolroute import select_tools
 from bagley.tools import Tool, ToolError
 
 log = logging.getLogger("bagley.agent")
@@ -134,6 +135,7 @@ class Agent:
     def __init__(self, runtime: Runtime) -> None:
         self.rt = runtime
         self._background: set[asyncio.Task[None]] = set()
+        self._offered: dict[str, Tool] = {}  # Tools offered this step, incl. load_tools.
 
     async def run(self, req: RunRequest, emit: Emit, approve: Approve) -> None:
         """Answer one message. Only one run per conversation at a time, across all windows."""
@@ -246,12 +248,16 @@ class Agent:
             await emit({"type": "model", "model": model, "tool_mode": mode})
 
             for index in range(prefs.max_steps):
-                messages = self._context(prefs, cid, tools, mode)
+                offered = tools
+                if prefs.tool_routing and tools:
+                    offered = select_tools(tools, store.list_messages(cid))
+                    self._offered = {t.name: t for t in offered}
+                messages = self._context(prefs, cid, offered, mode)
                 await emit({"type": "status", "state": "thinking"})
                 step = _Step()
                 try:
                     await self._stream(
-                        step, provider, model, messages, tools, mode, think, prefs, emit
+                        step, provider, model, messages, offered, mode, think, prefs, emit
                     )
                 except ToolsUnsupportedError:
                     if mode != "native" or step.text or step.reasoning:
@@ -264,10 +270,10 @@ class Agent:
                             "message": f"{model} has no native tool support. Using text-based tool calls.",
                         }
                     )
-                    messages = self._context(prefs, cid, tools, mode)
+                    messages = self._context(prefs, cid, offered, mode)
                     step = _Step()
                     await self._stream(
-                        step, provider, model, messages, tools, mode, think, prefs, emit
+                        step, provider, model, messages, offered, mode, think, prefs, emit
                     )
 
                 step_stats = self._step_stats(step)
@@ -430,7 +436,7 @@ class Agent:
     async def _run_tool(
         self, cid: str, call: ToolCall, emit: Emit, approve: Approve, disabled: list[str]
     ) -> None:
-        tool = self.rt.registry.get(call.name)
+        tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
         if tool and tool.name in disabled:
             tool = None
         await emit(

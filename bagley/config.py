@@ -134,6 +134,7 @@ class Preferences(BaseModel):
     context_tokens: int = Field(8192, ge=1024, le=1_048_576)
     max_steps: int = Field(8, ge=1, le=32)
     tool_mode: Literal["auto", "native", "prompt", "off"] = "auto"
+    tool_routing: bool = True
     think: bool = False
     persona: Persona = "bagley"
     custom_instructions: str = Field("", max_length=4000)
