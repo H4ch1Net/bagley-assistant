@@ -235,10 +235,12 @@ Any Python file in `~/.bagley/plugins/` is loaded at startup. Decorate functions
 from typing import Annotated
 from bagley.tools import ToolContext, tool
 
+
 @tool(summary="Roll {count}d{sides}")
 def roll_dice(sides: Annotated[int, "Faces per die"] = 6, count: int = 1) -> dict:
     """Roll dice and return each result and the total."""
     ...
+
 
 @tool(risk="confirm")  # Ask the user before every call.
 def send_report(ctx: ToolContext, text: str) -> str:
