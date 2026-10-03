@@ -12,6 +12,7 @@ from tests.demo_stack import DemoStack
 from tests.mock_llm import Reply
 
 sync_api = pytest.importorskip("playwright.sync_api")
+expect = sync_api.expect
 
 pytestmark = pytest.mark.ui
 
@@ -61,9 +62,7 @@ def test_chat_with_tool_call_and_reload(page, stack):
     wait_idle(page)
     assert page.locator('.tool-card[data-state="ok"]').count() == 1
     assert "22°C and mostly clear" in page.inner_text(".turn-assistant .prose")
-    page.wait_for_function(
-        "document.querySelector('#title-btn').textContent === 'Weekend weather in Lisbon'"
-    )
+    expect(page.locator("#title-btn")).to_have_text("Weekend weather in Lisbon")
     assert page.locator(".conv-item.active").inner_text().startswith("Weekend weather")
 
     page.reload()
@@ -117,7 +116,7 @@ def test_sidebar_search_rename_delete_undo(page, stack):
     page.reload()
     page.wait_for_selector(".conv-item")
     page.fill("#search", "sourdough")
-    page.wait_for_function("document.querySelectorAll('.conv-item').length === 1")
+    expect(page.locator(".conv-item")).to_have_count(1)
 
     page.hover(".conv-item")
     page.click(".conv-item [aria-label^='Rename']")
@@ -126,12 +125,12 @@ def test_sidebar_search_rename_delete_undo(page, stack):
     page.wait_for_selector(".conv-link >> text=Bread notes")
 
     page.fill("#search", "")
-    page.wait_for_function("document.querySelectorAll('.conv-item').length === 3")
+    expect(page.locator(".conv-item")).to_have_count(3)
     page.hover(".conv-item >> nth=0")
     page.click(".conv-item >> nth=0 >> [aria-label^='Delete']")
-    page.wait_for_function("document.querySelectorAll('.conv-item').length === 2")
+    expect(page.locator(".conv-item")).to_have_count(2)
     page.click(".toast >> text=Undo")
-    page.wait_for_function("document.querySelectorAll('.conv-item').length === 3")
+    expect(page.locator(".conv-item")).to_have_count(3)
 
 
 def test_settings_persona_memory_and_theme(page, stack):
@@ -148,10 +147,10 @@ def test_settings_persona_memory_and_theme(page, stack):
 
     page.click("#tab-appearance")
     page.click(".segmented >> text=Light")
-    assert page.evaluate("document.documentElement.dataset.theme") == "light"
+    expect(page.locator("html")).to_have_attribute("data-theme", "light")
     page.keyboard.press("Escape")
     page.reload()
-    assert page.evaluate("document.documentElement.dataset.theme") == "light"
+    expect(page.locator("html")).to_have_attribute("data-theme", "light")
 
 
 def test_attach_file(page, stack, tmp_path):
@@ -183,3 +182,47 @@ def test_mobile_layout(browser, stack):
     page.click("#scrim", position={"x": 370, "y": 400})
     page.wait_for_selector(".app:not(.sidebar-open)")
     context.close()
+
+
+def test_model_output_cannot_load_images_or_shadow_app_ids(page, stack):
+    stack.mock.script = [
+        Reply(
+            text='Look ![pixel](http://127.0.0.1:9/leak?d=secret) <img src="http://127.0.0.1:9/x"> '
+            '<div id="toasts">fake</div>\n\n```python\nprint("hi")\n```'
+        )
+    ]
+    send(page, "hi")
+    wait_idle(page)
+    thread = page.locator("#messages")
+    assert thread.locator("img").count() == 0
+    assert thread.locator("#toasts").count() == 0
+    assert thread.locator("a >> text=Image: pixel").count() == 1
+    copy = thread.locator("button[data-copy-code]")
+    assert copy.locator("use").count() == 1
+    copy.click()  # Must not throw.
+
+
+def test_first_reply_survives_switching_chats(page, stack):
+    stack.seed()
+    page.reload()
+    page.wait_for_selector(".conv-item")
+    stack.mock.delay = 0.03
+    stack.mock.script = [Reply(text="word " * 150)]
+    send(page, "Tell me a long story")
+    page.wait_for_selector(".turn-user:not(.pending)")
+    page.wait_for_selector(".prose.streaming")
+    page.click(".conv-link >> text=Sourdough starter ratios")
+    page.go_back()
+    wait_idle(page)
+    assert page.inner_text(".turn-assistant .prose").startswith("word word")
+
+
+def test_settings_keep_focus_while_saving(page, stack):
+    page.keyboard.press("Control+,")
+    box = page.locator("#custom-instructions")
+    box.click()
+    page.keyboard.type("Call me Sam.")
+    page.wait_for_selector("#save-state >> text=Saved")
+    page.keyboard.type(" I live in Leeds.")
+    expect(box).to_have_value("Call me Sam. I live in Leeds.")
+    expect(box).to_be_focused()

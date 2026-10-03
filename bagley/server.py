@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 import hmac
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -264,6 +267,23 @@ def _export_markdown(conv: dict[str, Any], messages: list[dict[str, Any]]) -> st
     return "\n".join(lines).rstrip() + "\n"
 
 
+def content_security_policy(html: str) -> str:
+    """Only this origin may supply scripts, styles, images and connections. The inline theme
+    script is pinned by hash; model output can never load remote images or frames."""
+    hashes = " ".join(
+        "'sha256-" + base64.b64encode(hashlib.sha256(body.encode()).digest()).decode() + "'"
+        for body in re.findall(r"<script>(.*?)</script>", html, re.S)
+    )
+    return (
+        "default-src 'self'; "
+        f"script-src 'self' {hashes}; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self' ws: wss:; "
+        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    )
+
+
 def create_app(runtime: Runtime | None = None, config: ServerConfig | None = None) -> FastAPI:
     config = runtime.config if runtime else (config or ServerConfig.from_env())
 
@@ -289,9 +309,16 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("{{version}}", __version__)
     )
 
+    page_headers = {
+        "Cache-Control": "no-cache",
+        "Content-Security-Policy": content_security_policy(index_html),
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+    }
+
     @app.get("/", include_in_schema=False)
     async def index() -> HTMLResponse:
-        return HTMLResponse(index_html, headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(index_html, headers=page_headers)
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:

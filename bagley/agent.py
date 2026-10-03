@@ -101,11 +101,27 @@ class Agent:
         run_id = uuid.uuid4().hex[:8]
         started = time.monotonic()
 
+        async def reject(message: str, cid: str | None = None) -> None:
+            # Every run ends with run.end, so clients never stay stuck in "running".
+            await emit({"type": "error", "message": message})
+            await emit(
+                {
+                    "type": "run.end",
+                    "run_id": run_id,
+                    "conversation_id": cid,
+                    "stopped": False,
+                    "stats": {},
+                }
+            )
+
+        if req.mode == "send" and not req.text.strip():
+            await reject("Message is empty.")
+            return
         conv = store.get_conversation(req.conversation_id) if req.conversation_id else None
         is_new = conv is None
         if conv is None:
             if req.mode != "send":
-                await emit({"type": "error", "message": "That conversation no longer exists."})
+                await reject("That conversation no longer exists.")
                 return
             conv = store.create_conversation(heuristic_title(req.text))
             await emit({"type": "conversation", "conversation": conv})
@@ -115,12 +131,9 @@ class Agent:
         history = store.list_messages(cid)
         last_user = next((m for m in reversed(history) if m["role"] == "user"), None)
         if req.mode == "send":
-            if not req.text.strip():
-                await emit({"type": "error", "message": "Message is empty."})
-                return
             user_message = store.add_message(cid, "user", req.text.strip())
         elif last_user is None:
-            await emit({"type": "error", "message": "There is nothing to regenerate yet."})
+            await reject("There is nothing to regenerate yet.", cid)
             return
         elif req.mode == "regenerate":
             store.delete_messages_from(cid, last_user["id"] + 1)

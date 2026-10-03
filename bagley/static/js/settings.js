@@ -95,6 +95,7 @@ export class Settings {
     this.onMemoriesChanged = onMemoriesChanged;
     this.tab = "general";
     this.dialog.addEventListener("close", () => (this.isOpen = false));
+    voice.onVoicesChanged(() => this.fillVoices?.());
   }
 
   open(tab = this.tab) {
@@ -136,12 +137,15 @@ export class Settings {
     this[`render_${this.tab}`](panel);
   }
 
+  /** Re-render the open dialog, keeping scroll position and keyboard focus. */
   refresh() {
-    if (this.dialog.open) {
-      const scroll = $("#settings-panel")?.scrollTop;
-      this.renderFrame();
-      if (scroll) $("#settings-panel").scrollTop = scroll;
-    }
+    if (!this.dialog.open) return;
+    const controls = () => [...this.dialog.querySelectorAll("button, input, select, textarea")];
+    const focused = controls().indexOf(document.activeElement);
+    const scroll = $("#settings-panel")?.scrollTop;
+    this.renderFrame();
+    if (scroll) $("#settings-panel").scrollTop = scroll;
+    if (focused >= 0) controls()[focused]?.focus({ preventScroll: true });
   }
 
   // General ---------------------------------------------------------------------------------
@@ -432,7 +436,7 @@ export class Settings {
       voiceSelect.value = state.ui.voice || "";
     };
     fill();
-    voice.onVoicesChanged(fill);
+    this.fillVoices = fill;
     voiceSelect.addEventListener("change", () => setUi("voice", voiceSelect.value));
     const rate = el("input", { class: "range", type: "range", min: 0.6, max: 1.6, step: 0.1, value: state.ui.rate, "aria-label": "Speaking rate" });
     const rateOut = el("output", { text: `${Number(state.ui.rate).toFixed(1)}×` });

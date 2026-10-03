@@ -44,7 +44,7 @@ const chat = new Chat({
   avatars,
   voice,
   setStatus,
-  onRunStart: () => {
+  onRunBegin: () => {
     updateComposer();
     sidebar.render();
   },
@@ -123,7 +123,6 @@ bus.on("prefs", () => {
   renderModelButton();
   renderStats();
   renderPrivacy();
-  settings.refresh();
   loadTools().catch(() => {});
 });
 
@@ -170,8 +169,10 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) document.title = document.title.replace(/^● /, "");
 });
 
+const titleBtn = $("#title-btn");
+
 function setTitle(title) {
-  const btn = $("#title-btn");
+  const btn = titleBtn;
   btn.textContent = title || "New chat";
   btn.disabled = !state.activeId;
   $("#export-btn").disabled = !state.activeId;
@@ -216,7 +217,7 @@ socket.on("conversation", (ev) => {
 });
 
 socket.on("title", (ev) => {
-  sidebar.upsert({ id: ev.conversation_id, title: ev.title });
+  sidebar.update({ id: ev.conversation_id, title: ev.title });
   if (ev.conversation_id === state.activeId) setTitle(ev.title);
 });
 
@@ -387,8 +388,8 @@ $("#model-btn").addEventListener("click", () => {
 
 // Title rename -----------------------------------------------------------------------------------
 
-$("#title-btn").addEventListener("click", () => {
-  const btn = $("#title-btn");
+titleBtn.addEventListener("click", () => {
+  const btn = titleBtn;
   const field = el("input", { value: btn.textContent, "aria-label": "Chat title", maxlength: 120 });
   btn.replaceWith(field);
   field.focus();
@@ -663,7 +664,7 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     const text = chat.lastReplyText();
     if (text) copyText(text).then(() => toast("Copied last reply"));
-  } else if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
+  } else if (e.key === "Escape" && !document.querySelector("body > dialog[open]")) {
     if (state.run) { e.preventDefault(); chat.stop(); announce("Stopping."); }
     else if (voice.speaking) { voice.stop(); setStatus("idle"); }
     else closeSidebar();

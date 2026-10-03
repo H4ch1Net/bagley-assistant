@@ -52,8 +52,22 @@ export class Sidebar {
     this.render();
   }
 
+  /** Merge a partial change into a conversation that is already listed. */
+  update(partial) {
+    const item = state.conversations.find((c) => c.id === partial.id);
+    if (!item) return;
+    Object.assign(item, partial);
+    this.seq = (this.seq || 0) + 1;
+    this.render();
+  }
+
   render() {
     const root = $("#conv-list");
+    if (root.querySelector(".conv-rename")) {
+      this.deferred = true; // Don't destroy an open rename field; render when it closes.
+      return;
+    }
+    this.deferred = false;
     if (!state.conversations.length) {
       root.replaceChildren(
         el("div", { class: "conv-empty" }, state.query ? `No chats match “${state.query}”.` : "Your chats will appear here."),
@@ -104,6 +118,7 @@ export class Sidebar {
       if (done) return;
       done = true;
       const title = input.value.trim();
+      input.remove(); // Lets render() run again.
       if (save && title && title !== conv.title) {
         try {
           this.upsert(await api.patch(`/api/conversations/${conv.id}`, { title }));

@@ -119,6 +119,14 @@ async def test_missing_model_reports_hint_and_regenerate_recovers(make_runtime, 
     assert [m["role"] for m in rt.store.list_messages(cid)] == ["user", "assistant"]
 
 
+async def test_rejected_runs_still_end(make_runtime, recorder):
+    rt = make_runtime()
+    await run(rt, recorder, "   ")
+    await run(rt, recorder, conversation_id="missing", mode="regenerate")
+    assert recorder.types() == ["error", "run.end", "error", "run.end"]
+    assert rt.store.list_conversations() == []
+
+
 async def test_edit_replaces_last_exchange(make_runtime, recorder, mock):
     rt = make_runtime()
     await run(rt, recorder, "hi")

@@ -37,6 +37,8 @@ def test_index_and_static(client):
     page = client.get("/")
     assert page.status_code == 200 and "Bagley" in page.text and "{{version}}" not in page.text
     assert client.get("/static/js/main.js").status_code == 200
+    csp = page.headers["content-security-policy"]
+    assert "img-src 'self' data:" in csp and "'sha256-" in csp and "frame-ancestors 'none'" in csp
 
 
 def test_health_and_models(client):

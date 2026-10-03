@@ -1,7 +1,7 @@
 // The conversation thread: renders history, streams live runs, and owns message actions.
 
 import { avatarGlyph } from "./avatar.js";
-import { renderMarkdown } from "./markdown.js";
+import { renderMarkdown, setMarkdown } from "./markdown.js";
 import { state, toolIcon, toolInfo, toolSummary } from "./state.js";
 import { announce, toast } from "./ui.js";
 import { $, clockTime, copyText, el, formatDuration, icon } from "./util.js";
@@ -57,7 +57,7 @@ function prettyResult(text) {
 
 function proseBlock(markdown, streaming = false) {
   const node = el("div", { class: `prose${streaming ? " streaming" : ""}` });
-  node.innerHTML = renderMarkdown(markdown);
+  setMarkdown(node, markdown);
   return node;
 }
 
@@ -135,12 +135,12 @@ function metaLine(meta = {}) {
 // Chat -------------------------------------------------------------------------------------------
 
 export class Chat {
-  constructor({ socket, avatars, voice, setStatus, onRunStart, onRunEnd }) {
+  constructor({ socket, avatars, voice, setStatus, onRunBegin, onRunEnd }) {
     this.socket = socket;
     this.avatars = avatars;
     this.voice = voice;
     this.setStatus = setStatus;
-    this.onRunStart = onRunStart;
+    this.onRunBegin = onRunBegin;
     this.onRunEnd = onRunEnd;
     this.live = null;
     this.stick = true;
@@ -314,6 +314,10 @@ export class Chat {
       node.querySelector(".turn-foot").hidden = false;
     };
     const save = () => {
+      if (state.run) {
+        toast("Wait for the current reply to finish, or stop it first.");
+        return;
+      }
       const text = area.value.trim();
       if (!text || text === original) return cancel();
       if (!this.socket.send({ type: "chat", mode: "edit", text, conversation_id: state.activeId })) {
@@ -362,7 +366,7 @@ export class Chat {
     this.scrollToBottom(false);
     this.setStatus("thinking");
     this.markLast();
-    this.onRunStart?.();
+    this.onRunBegin?.();
   }
 
   isVisible() {
@@ -396,7 +400,7 @@ export class Chat {
     if (!seg) return;
     if (seg.type === "text") {
       seg.el.classList.remove("streaming");
-      seg.el.innerHTML = renderMarkdown(seg.raw);
+      setMarkdown(seg.el, seg.raw);
     } else if (seg.type === "reasoning") {
       const secs = Math.max(1, Math.round((performance.now() - seg.started) / 1000));
       seg.block.details.classList.remove("live");
@@ -442,7 +446,7 @@ export class Chat {
       requestAnimationFrame(() => {
         this.renderQueued = false;
         const current = this.live?.segment;
-        if (current?.type === "text") current.el.innerHTML = renderMarkdown(current.raw);
+        if (current?.type === "text") setMarkdown(current.el, current.raw);
         this.follow();
       });
     }
@@ -491,7 +495,9 @@ export class Chat {
     card.card.append(box);
     card.approval = box;
     this.follow();
-    if (this.stick) allow.focus({ preventScroll: true });
+    // Only take focus when the user isn't typing somewhere, so a keystroke can't approve.
+    const active = document.activeElement;
+    if (this.stick && (!active || active === document.body || thread().contains(active))) allow.focus({ preventScroll: true });
     announce(`Bagley needs your approval to ${summary}.`);
   }
 
@@ -546,6 +552,12 @@ export class Chat {
     this.live = null;
     if (live) {
       live.node.classList.remove("live");
+      for (const card of live.cards.values()) {
+        if (["running", "approval"].includes(card.card.dataset.state)) {
+          card.approval?.remove();
+          card.set("cancelled");
+        }
+      }
       if (!live.body.children.length) {
         live.body.append(el("div", { class: "notice" }, icon("info", "icon-sm"), el("span", { text: ev.stopped ? "Stopped." : "No reply." })));
       }
@@ -587,6 +599,7 @@ export class Chat {
 
   flashCopied(button) {
     const use = button.querySelector("use");
+    if (!use) return;
     const prev = use.getAttribute("href");
     use.setAttribute("href", "/static/icons.svg#i-check");
     setTimeout(() => use.setAttribute("href", prev), 1200);
