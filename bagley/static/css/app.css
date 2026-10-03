@@ -20,7 +20,7 @@
   --t-med: 200ms;
   --t-slow: 320ms;
 
-  /* The avatar's face is always dark, so its light stays bright in both themes. */
+  /* The avatar's viewport is always dark, so its light stays bright in both themes. */
   --avatar-accent: hsl(var(--accent-h) 88% var(--accent-l, 62%));
   --sidebar-w: 272px;
   --presence-w: 300px;
@@ -633,7 +633,7 @@ kbd {
   padding: 32px 24px 48px;
   text-align: center;
 }
-.hero-avatar { width: 128px; height: 128px; margin-bottom: 18px; }
+.hero-avatar { width: 140px; height: 140px; margin-bottom: 20px; }
 .app.presence-open .hero-avatar { display: none; }
 .empty h2 { margin: 0 0 6px; font-size: 28px; font-weight: 650; letter-spacing: -.02em; }
 .empty > p { margin: 0 0 28px; color: var(--text-2); max-width: 460px; }
@@ -774,10 +774,10 @@ kbd {
 .presence-stage {
   position: relative;
   display: flex; flex-direction: column; align-items: center;
-  padding: 36px 20px 24px;
+  padding: 28px 20px 22px;
   background: radial-gradient(120% 70% at 50% 0%, var(--accent-soft), transparent 70%);
 }
-.presence-stage canvas { width: 196px; height: 196px; }
+.presence-stage canvas { width: 216px; height: 216px; }
 .presence-name { margin-top: 14px; font-size: 20px; font-weight: 680; letter-spacing: -.01em; }
 .presence-state {
   display: inline-flex; align-items: center; gap: 8px;

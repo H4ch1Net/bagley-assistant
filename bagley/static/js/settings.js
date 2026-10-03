@@ -444,7 +444,7 @@ export class Settings {
     rate.addEventListener("input", () => { rateOut.textContent = `${Number(rate.value).toFixed(1)}×`; setUi("rate", Number(rate.value)); });
     panel.append(
       el("div", { class: "section" },
-        toggleRow("Read replies aloud", "Bagley speaks each reply when it finishes. The avatar lip-syncs.", state.ui.speak, (v) => setUi("speak", v)),
+        toggleRow("Read replies aloud", "Bagley speaks each reply when it finishes. The avatar pulses with each word.", state.ui.speak, (v) => setUi("speak", v)),
       ),
       el("div", { class: "section" },
         field("Voice", voiceSelect, { id: "pref-voice" }),

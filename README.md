@@ -26,7 +26,7 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 
 | | |
 |---|---|
-| **Animated avatar** | A canvas-drawn face that shows what Bagley is doing: listening while you type, thinking, scanning while a tool runs, amber while it waits for approval, talking while it writes or speaks, asleep when the model server is offline. |
+| **Animated avatar** | A minimal blob-tracking display: soft blobs drift in a dark viewport under thin tracking boxes, centroids and readouts. Their number, speed, links and colour show what Bagley is doing: a few slow tracks when idle, a dense linked mesh while thinking, a scan line and the tool's name while a tool runs, amber while it waits for approval, a lock-on box when a reply lands, dim dashed tracks when the model server is offline. |
 | **Local models** | Native Ollama support (context size, reasoning, one-click model downloads) and any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, LocalAI, Jan, OpenRouter, OpenAI. |
 | **Agent loop** | Multi-step tool calling with streaming, cancellation, step limits and approvals. Models without native function calling use a text-based tool protocol automatically. |
 | **Built-in tools** | Web search, page reader, weather, calculator, time zones, workspace files, long-term memory, optional shell. |
@@ -34,7 +34,7 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 | **Reasoning models** | Thinking from qwen3, deepseek-r1 or gpt-oss streams into a collapsible block, separate from the answer. |
 | **Chat history** | Search, rename, delete with undo, Markdown export, edit and resend, regenerate, deep links. |
 | **Attachments** | Drop text files on the composer. They are saved to the workspace where the file tools can read them. |
-| **Voice** | Read replies aloud with your system voices (the avatar lip-syncs). Optional dictation where the browser supports it. |
+| **Voice** | Read replies aloud with your system voices (the tracked blobs pulse with each word). Optional dictation where the browser supports it. |
 | **Interface** | Dark and light themes, accent colours, keyboard shortcuts, responsive down to phone width, reduced-motion support, a tab-title marker when a reply finishes in the background. |
 | **Terminal** | `bagley chat` for a terminal session and `bagley doctor` to check your setup. |
 
@@ -73,7 +73,7 @@ This opens <http://127.0.0.1:8765>. If no model server is found, the start scree
   </tr>
   <tr>
     <td><img src="docs/screenshots/settings.png" alt="Model settings"><br><sub>Model settings. Server type, URL, model, context and tool mode.</sub></td>
-    <td><img src="docs/screenshots/onboarding.png" alt="Setup card when no model server is running"><br><sub>First run without a model server. The avatar is asleep.</sub></td>
+    <td><img src="docs/screenshots/onboarding.png" alt="Setup card when no model server is running"><br><sub>First run without a model server. The tracker reads NO SIGNAL.</sub></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/light.png" alt="Light theme"><br><sub>Light theme.</sub></td>

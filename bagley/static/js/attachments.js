@@ -1,6 +1,5 @@
 // Attached files: uploaded into the workspace so Bagley's file tools can read them.
 
-import { api } from "./api.js";
 import { toast } from "./ui.js";
 import { $, el, formatBytes, icon } from "./util.js";
 

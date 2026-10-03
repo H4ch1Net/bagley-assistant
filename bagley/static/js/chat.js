@@ -391,6 +391,7 @@ export class Chat {
     if (ev.state === "tool") {
       const card = [...(this.live?.cards.values() || [])].pop();
       label = card?.card.querySelector(".tool-summary")?.textContent;
+      this.avatars.setTag(ev.tool);
     }
     this.setStatus(ev.state, label);
   }
