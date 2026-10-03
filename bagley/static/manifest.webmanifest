@@ -1,0 +1,10 @@
+{
+  "name": "Bagley",
+  "short_name": "Bagley",
+  "description": "A local-first AI assistant.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090b0f",
+  "theme_color": "#090b0f",
+  "icons": [{ "src": "/static/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
