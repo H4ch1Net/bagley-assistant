@@ -144,5 +144,9 @@ class Runtime:
 
     def tool_context(self, conversation_id: str | None = None) -> ToolContext:
         return ToolContext(
-            config=self.config, store=self.store, http=self.http, conversation_id=conversation_id
+            config=self.config,
+            store=self.store,
+            http=self.http,
+            conversation_id=conversation_id,
+            runtime=self,
         )

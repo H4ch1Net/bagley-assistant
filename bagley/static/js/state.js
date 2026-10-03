@@ -63,11 +63,26 @@ const TOOL_ICONS = {
   read_file: "file-text",
   search_files: "text-search",
   write_file: "file-pen-line",
+  edit_file: "pencil",
+  move_file: "folder-input",
+  delete_file: "trash-2",
+  make_directory: "folder-plus",
+  system_status: "activity",
+  open_on_computer: "monitor-up",
+  notify_user: "bell",
+  set_reminder: "alarm-clock",
+  schedule_task: "calendar-clock",
+  watch_webpage: "eye",
+  list_automations: "list-checks",
+  cancel_automation: "timer",
+  search_knowledge: "library",
+  read_document: "book-open",
+  run_python: "code",
   remember: "bookmark",
   forget: "eraser",
   run_command: "terminal",
 };
-const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench" };
+const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench", automation: "calendar-clock", knowledge: "library" };
 
 export function toolIcon(name, category) {
   return TOOL_ICONS[name] || CATEGORY_ICONS[category || toolInfo(name)?.category] || "wrench";

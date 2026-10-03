@@ -226,3 +226,28 @@ def test_settings_keep_focus_while_saving(page, stack):
     page.keyboard.type(" I live in Leeds.")
     expect(box).to_have_value("Call me Sam. I live in Leeds.")
     expect(box).to_be_focused()
+
+
+def test_file_change_shows_diff_and_reverts(page, stack):
+    note = stack.runtime.config.workspace / "todo.md"
+    note.write_text("- milk\n- eggs\n")
+    stack.mock.script = [
+        Reply(
+            tool_calls=[
+                ("edit_file", {"path": "todo.md", "find": "- eggs", "replace": "- eggs\n- bread"})
+            ]
+        ),
+        Reply(text="Added bread."),
+    ]
+    send(page, "Add bread to my todo list")
+    page.click(".approval .btn-primary")
+    wait_idle(page)
+    expect(page.locator(".diffstat .add")).to_have_text("+1")
+    assert note.read_text() == "- milk\n- eggs\n- bread\n"
+    page.click(".tool-card .tool-head")
+    expect(page.locator(".diff .add")).to_have_text("+- bread")
+    page.click(".tool-bar .revert")
+    expect(page.locator(".tool-bar .badge")).to_have_text("Reverted")
+    assert note.read_text() == "- milk\n- eggs\n"
+    page.reload()
+    expect(page.locator(".tool-bar .badge")).to_have_text("Reverted")

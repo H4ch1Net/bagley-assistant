@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -42,7 +42,39 @@ CREATE TABLE IF NOT EXISTS preferences (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS journal (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT,
+    action          TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    dest            TEXT,
+    backup          TEXT,
+    after_hash      TEXT,
+    created_at      REAL NOT NULL,
+    reverted_at     REAL
+);
+CREATE TABLE IF NOT EXISTS automations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    prompt          TEXT NOT NULL DEFAULT '',
+    schedule        TEXT NOT NULL,
+    target          TEXT,
+    conversation_id TEXT,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    next_run        REAL,
+    last_run        REAL,
+    last_status     TEXT,
+    last_result     TEXT,
+    state           TEXT,
+    created_at      REAL NOT NULL
+);
 """
+
+AUTOMATION_FIELDS = {
+    "kind", "name", "prompt", "schedule", "target", "conversation_id", "enabled", "next_run",
+    "last_run", "last_status", "last_result", "state",
+}  # fmt: skip
 
 # Soft-deleted conversations are kept this long so "Undo" works, then purged.
 TRASH_RETENTION_SECONDS = 24 * 3600
@@ -67,6 +99,11 @@ class Store:
             if self.path != ":memory:":
                 self._db.execute("PRAGMA journal_mode = WAL")
             self._db.executescript(SCHEMA)
+            columns = {r[1] for r in self._db.execute("PRAGMA table_info(conversations)")}
+            if "unread" not in columns:  # Added in schema 2.
+                self._db.execute(
+                    "ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0"
+                )
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._db.commit()
         self.purge_trash()
@@ -98,11 +135,11 @@ class Store:
             "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
             (cid, title, now, now),
         )
-        return {"id": cid, "title": title, "created_at": now, "updated_at": now}
+        return {"id": cid, "title": title, "created_at": now, "updated_at": now, "unread": 0}
 
     def get_conversation(self, cid: str) -> dict[str, Any] | None:
         row = self._one(
-            "SELECT id, title, created_at, updated_at FROM conversations "
+            "SELECT id, title, created_at, updated_at, unread FROM conversations "
             "WHERE id = ? AND deleted_at IS NULL",
             (cid,),
         )
@@ -113,7 +150,7 @@ class Store:
             escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
             rows = self._all(
-                "SELECT c.id, c.title, c.created_at, c.updated_at FROM conversations c "
+                "SELECT c.id, c.title, c.created_at, c.updated_at, c.unread FROM conversations c "
                 "WHERE c.deleted_at IS NULL AND (c.title LIKE ? ESCAPE '\\' OR EXISTS ("
                 "  SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
                 "  AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\')) "
@@ -122,7 +159,7 @@ class Store:
             )
         else:
             rows = self._all(
-                "SELECT id, title, created_at, updated_at FROM conversations "
+                "SELECT id, title, created_at, updated_at, unread FROM conversations "
                 "WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             )
@@ -134,6 +171,9 @@ class Store:
             "UPDATE conversations SET title = ? WHERE id = ? AND deleted_at IS NULL", (title, cid)
         )
         return cur.rowcount > 0
+
+    def set_unread(self, cid: str, unread: bool) -> None:
+        self._exec("UPDATE conversations SET unread = ? WHERE id = ?", (int(unread), cid))
 
     def touch_conversation(self, cid: str) -> None:
         self._exec("UPDATE conversations SET updated_at = ? WHERE id = ?", (_now(), cid))
@@ -249,3 +289,83 @@ class Store:
                 [(k, json.dumps(v)) for k, v in values.items()],
             )
             self._db.commit()
+
+    # Change journal ------------------------------------------------------------------------
+
+    def add_journal(self, **fields: Any) -> int:
+        keys = ["conversation_id", "action", "path", "dest", "backup", "after_hash"]
+        cur = self._exec(
+            f"INSERT INTO journal ({', '.join(keys)}, created_at) VALUES ({', '.join('?' * len(keys))}, ?)",
+            (*(fields.get(k) for k in keys), _now()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def get_journal(self, jid: int) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM journal WHERE id = ?", (jid,))
+        return dict(row) if row else None
+
+    def mark_reverted(self, jid: int) -> None:
+        self._exec("UPDATE journal SET reverted_at = ? WHERE id = ?", (_now(), jid))
+
+    def reverted_ids(self, ids: list[int]) -> set[int]:
+        if not ids:
+            return set()
+        rows = self._all(
+            f"SELECT id FROM journal WHERE reverted_at IS NOT NULL AND id IN ({','.join('?' * len(ids))})",
+            tuple(ids),
+        )
+        return {r["id"] for r in rows}
+
+    # Automations ---------------------------------------------------------------------------
+
+    def create_automation(self, **fields: Any) -> dict[str, Any]:
+        data = {k: v for k, v in fields.items() if k in AUTOMATION_FIELDS}
+        cols = list(data)
+        cur = self._exec(
+            f"INSERT INTO automations ({', '.join(cols)}, created_at) VALUES ({', '.join('?' * len(cols))}, ?)",
+            (*(self._encode(k, data[k]) for k in cols), _now()),
+        )
+        return self.get_automation(int(cur.lastrowid or 0)) or {}
+
+    def update_automation(self, aid: int, **fields: Any) -> dict[str, Any] | None:
+        data = {k: v for k, v in fields.items() if k in AUTOMATION_FIELDS}
+        if data:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            self._exec(
+                f"UPDATE automations SET {sets} WHERE id = ?",
+                (*(self._encode(k, v) for k, v in data.items()), aid),
+            )
+        return self.get_automation(aid)
+
+    def get_automation(self, aid: int) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM automations WHERE id = ?", (aid,))
+        return self._automation(row) if row else None
+
+    def list_automations(self) -> list[dict[str, Any]]:
+        return [self._automation(r) for r in self._all("SELECT * FROM automations ORDER BY id")]
+
+    def due_automations(self, now: float) -> list[dict[str, Any]]:
+        rows = self._all(
+            "SELECT * FROM automations WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ? "
+            "ORDER BY next_run",
+            (now,),
+        )
+        return [self._automation(r) for r in rows]
+
+    def delete_automation(self, aid: int) -> bool:
+        return self._exec("DELETE FROM automations WHERE id = ?", (aid,)).rowcount > 0
+
+    @staticmethod
+    def _encode(key: str, value: Any) -> Any:
+        if key == "state":
+            return json.dumps(value) if value is not None else None
+        if key == "enabled":
+            return int(bool(value))
+        return value
+
+    @staticmethod
+    def _automation(row: sqlite3.Row) -> dict[str, Any]:
+        data = dict(row)
+        data["enabled"] = bool(data["enabled"])
+        data["state"] = json.loads(data["state"]) if data.get("state") else {}
+        return data

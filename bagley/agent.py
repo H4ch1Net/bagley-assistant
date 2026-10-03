@@ -444,6 +444,7 @@ class Agent:
         )
         started = time.monotonic()
         ok = False
+        ui: dict[str, Any] = {}
         if tool is None:
             names = ", ".join(t.name for t in self.rt.registry.enabled(disabled))
             result = f"Error: there is no tool named '{call.name}'. Available tools: {names}"
@@ -466,7 +467,7 @@ class Agent:
                 await emit({"type": "status", "state": "tool", "tool": call.name})
                 started = time.monotonic()
                 try:
-                    result = await tool.invoke(call.arguments, self.rt.tool_context(cid))
+                    result, ui = await tool.run(call.arguments, self.rt.tool_context(cid))
                     ok = True
                 except ToolError as exc:
                     result = f"Error: {exc}"
@@ -480,7 +481,7 @@ class Agent:
             result,
             tool_call_id=call.id,
             name=call.name,
-            meta={"ok": ok, "duration_ms": duration},
+            meta={"ok": ok, "duration_ms": duration, **({"ui": ui} if ui else {})},
         )
         await emit(
             {
@@ -489,6 +490,7 @@ class Agent:
                 "ok": ok,
                 "result": result[:RESULT_PREVIEW_CHARS],
                 "duration_ms": duration,
+                "ui": ui,
             }
         )
 

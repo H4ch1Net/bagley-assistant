@@ -1,5 +1,6 @@
 // The conversation thread: renders history, streams live runs, and owns message actions.
 
+import { api } from "./api.js";
 import { avatarGlyph } from "./avatar.js";
 import { renderMarkdown, setMarkdown } from "./markdown.js";
 import { state, toolIcon, toolInfo, toolSummary } from "./state.js";
@@ -72,7 +73,65 @@ function reasoningBlock(text, { live = false, seconds } = {}) {
 }
 
 /** A collapsible card for one tool call. Returns helpers to update it as the call progresses. */
-export function toolCard({ id, name, args, state: initial = "running", result, duration, summaryTemplate, category }) {
+function diffBlock(diff) {
+  const pre = el("pre", { class: "diff" });
+  for (const line of diff.split("\n")) {
+    let cls = "";
+    if (line.startsWith("+++") || line.startsWith("---")) cls = "meta";
+    else if (line.startsWith("@@")) cls = "hunk";
+    else if (line.startsWith("+")) cls = "add";
+    else if (line.startsWith("-")) cls = "del";
+    pre.append(el("span", { class: cls, text: `${line}\n` }));
+  }
+  return pre;
+}
+
+function diffStat(diff) {
+  let add = 0;
+  let del = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) add++;
+    else if (line.startsWith("-") && !line.startsWith("---")) del++;
+  }
+  return { add, del };
+}
+
+/** Extras a tool attached for the UI: a diff with a Revert button, images it produced. */
+function toolExtras(card, detail, ui) {
+  if (!ui || card.querySelector(".tool-bar")) return;
+  const bar = el("div", { class: "tool-bar" });
+  if (ui.diff) {
+    const { add, del } = diffStat(ui.diff);
+    bar.append(el("span", { class: "diffstat" }, el("span", { class: "add", text: `+${add}` }), el("span", { class: "del", text: `−${del}` })));
+    detail.prepend(el("h4", { text: "Changes" }), diffBlock(ui.diff));
+  }
+  if (ui.journal_id) {
+    const done = () => bar.querySelector(".revert")?.replaceWith(el("span", { class: "badge", text: "Reverted" }));
+    const revert = el("button", { class: "btn btn-sm btn-ghost revert", type: "button", title: "Undo this change" }, icon("undo-2", "icon-sm"), "Revert");
+    revert.addEventListener("click", async () => {
+      revert.disabled = true;
+      try {
+        await api.post(`/api/journal/${ui.journal_id}/revert`);
+        done();
+        toast("Change reverted");
+      } catch (err) {
+        revert.disabled = false;
+        toast(err.message, { type: "error" });
+      }
+    });
+    bar.append(revert);
+    if (ui.reverted) done();
+  }
+  if (ui.images?.length) {
+    const media = el("div", { class: "tool-media" }, ...ui.images.map((img) =>
+      el("a", { href: img.url, target: "_blank", rel: "noopener", title: img.path }, el("img", { src: img.url, alt: img.path, loading: "lazy" })),
+    ));
+    card.append(media);
+  }
+  if (bar.children.length) card.insertBefore(bar, detail);
+}
+
+export function toolCard({ id, name, args, state: initial = "running", result, duration, summaryTemplate, category, ui }) {
   const info = toolInfo(name);
   const statusEl = el("span", { class: "tool-status" });
   const resultPre = el("pre", { text: result ? prettyResult(result) : "" });
@@ -96,7 +155,7 @@ export function toolCard({ id, name, args, state: initial = "running", result, d
 
   const api = {
     card,
-    set(next, { result: text, duration: ms } = {}) {
+    set(next, { result: text, duration: ms, ui: extras } = {}) {
       card.dataset.state = next;
       statusEl.replaceChildren();
       if (next === "running") statusEl.append(el("span", { class: "spinner" }));
@@ -109,9 +168,10 @@ export function toolCard({ id, name, args, state: initial = "running", result, d
         resultPre.textContent = prettyResult(text);
         resultWrap.hidden = false;
       }
+      if (extras && Object.keys(extras).length) toolExtras(card, detail, extras);
     },
   };
-  api.set(initial, { result, duration });
+  api.set(initial, { result, duration, ui });
   return api;
 }
 
@@ -242,6 +302,7 @@ export class Chat {
           state: status,
           result: part.result?.content,
           duration: meta.duration_ms,
+          ui: meta.ui,
         }).card);
       }
     }
@@ -516,7 +577,7 @@ export class Chat {
       card.set("denied", { result: ev.result });
       return;
     }
-    card.set(ev.ok ? "ok" : "error", { result: ev.result, duration: ev.duration_ms });
+    card.set(ev.ok ? "ok" : "error", { result: ev.result, duration: ev.duration_ms, ui: ev.ui });
   }
 
   onNotice(ev) {

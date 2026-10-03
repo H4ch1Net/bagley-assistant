@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shutil
 from pathlib import Path
 from typing import Annotated, Any
 
-from bagley.tools import ToolContext, ToolError, tool
+from bagley.journal import file_hash, snapshot, text_diff
+from bagley.tools import ToolContext, ToolError, ToolOutput, tool
 
 MAX_READ_CHARS = 20_000
 MAX_WRITE_CHARS = 200_000
@@ -127,14 +129,41 @@ def search_files(
     return {"matches": matches, "truncated": False}
 
 
+def _read_text(target: Path) -> str:
+    if not target.is_file():
+        return ""
+    try:
+        return target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+def _changed(
+    ctx: ToolContext, action: str, target: Path, old: str, new: str, backup: str | None, verb: str
+) -> ToolOutput:
+    rel = _rel(ctx, target)
+    jid = ctx.store.add_journal(
+        conversation_id=ctx.conversation_id,
+        action=action,
+        path=rel,
+        backup=backup,
+        after_hash=file_hash(target),
+    )
+    return ToolOutput(
+        f"{verb} {rel} ({len(new)} chars).",
+        ui={"journal_id": jid, "path": rel, "diff": text_diff(old, new, rel)},
+    )
+
+
 @tool(category="files", risk="confirm", summary="Write {path}")
 def write_file(
     ctx: ToolContext,
     path: Annotated[str, "File path relative to the workspace"],
     content: Annotated[str, "Full text content to write"],
     append: Annotated[bool, "Append instead of overwriting"] = False,
-) -> str:
-    """Create or overwrite a text file in the workspace (or append to it). Asks the user first."""
+) -> ToolOutput:
+    """Create or overwrite a text file in the workspace (or append to it). Asks the user first.
+    Every change can be reverted from the chat."""
     if len(content) > MAX_WRITE_CHARS:
         raise ToolError("Content is too large.")
     target = resolve(ctx, path)
@@ -142,7 +171,103 @@ def write_file(
         raise ToolError(f"'{path}' is a directory.")
     target.parent.mkdir(parents=True, exist_ok=True)
     existed = target.exists()
+    old = _read_text(target)
+    backup = snapshot(ctx.config, target)
     with target.open("a" if append else "w", encoding="utf-8") as fh:
         fh.write(content)
     verb = "Appended to" if append else ("Overwrote" if existed else "Created")
-    return f"{verb} {_rel(ctx, target)} ({len(content)} chars)."
+    return _changed(ctx, "write", target, old, old + content if append else content, backup, verb)
+
+
+@tool(category="files", risk="confirm", summary="Edit {path}")
+def edit_file(
+    ctx: ToolContext,
+    path: Annotated[str, "File path relative to the workspace"],
+    find: Annotated[str, "Exact text to replace (include enough context to be unique)"],
+    replace: Annotated[str, "Replacement text"],
+    all_occurrences: Annotated[bool, "Replace every occurrence instead of exactly one"] = False,
+) -> ToolOutput:
+    """Replace exact text in a workspace file without rewriting all of it. Asks the user first."""
+    target = resolve(ctx, path)
+    if not target.is_file():
+        raise ToolError(f"'{path}' is not a file.")
+    old = _read_text(target)
+    count = old.count(find) if find else 0
+    if count == 0:
+        raise ToolError("The text to replace was not found. Read the file and copy it exactly.")
+    if count > 1 and not all_occurrences:
+        raise ToolError(f"The text appears {count} times. Add more context or set all_occurrences.")
+    new = old.replace(find, replace) if all_occurrences else old.replace(find, replace, 1)
+    backup = snapshot(ctx.config, target)
+    target.write_text(new, encoding="utf-8")
+    return _changed(
+        ctx, "edit", target, old, new, backup, f"Edited ({count} replacement{'s' * (count > 1)})"
+    )
+
+
+@tool(category="files", risk="confirm", summary="Move {source} to {destination}")
+def move_file(
+    ctx: ToolContext,
+    source: Annotated[str, "File or folder to move, relative to the workspace"],
+    destination: Annotated[str, "New path, relative to the workspace"],
+) -> ToolOutput:
+    """Move or rename a file or folder in the workspace. Asks the user first; can be reverted."""
+    src = resolve(ctx, source)
+    dst = resolve(ctx, destination)
+    if not src.exists():
+        raise ToolError(f"'{source}' does not exist.")
+    if dst.is_dir():
+        dst = dst / src.name
+    if dst.exists():
+        raise ToolError(f"'{_rel(ctx, dst)}' already exists.")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), dst)
+    jid = ctx.store.add_journal(
+        conversation_id=ctx.conversation_id,
+        action="move",
+        path=_rel(ctx, src),
+        dest=_rel(ctx, dst),
+        after_hash=file_hash(dst),
+    )
+    return ToolOutput(
+        f"Moved {_rel(ctx, src)} to {_rel(ctx, dst)}.",
+        ui={"journal_id": jid, "path": _rel(ctx, dst)},
+    )
+
+
+@tool(category="files", risk="confirm", summary="Delete {path}")
+def delete_file(
+    ctx: ToolContext,
+    path: Annotated[str, "File or folder to delete, relative to the workspace"],
+) -> ToolOutput:
+    """Delete a file or folder from the workspace. It is kept in Bagley's journal so the user can
+    restore it. Asks the user first."""
+    target = resolve(ctx, path)
+    root = Path(ctx.config.workspace or ".").resolve()
+    if target == root:
+        raise ToolError("Refusing to delete the whole workspace.")
+    if not target.exists():
+        raise ToolError(f"'{path}' does not exist.")
+    rel = _rel(ctx, target)
+    backup = snapshot(ctx.config, target, move=True)
+    jid = ctx.store.add_journal(
+        conversation_id=ctx.conversation_id, action="delete", path=rel, backup=backup
+    )
+    return ToolOutput(
+        f"Deleted {rel}. It can be restored from the chat.", ui={"journal_id": jid, "path": rel}
+    )
+
+
+@tool(category="files", summary="Create folder {path}")
+def make_directory(
+    ctx: ToolContext,
+    path: Annotated[str, "Folder to create, relative to the workspace"],
+) -> ToolOutput | str:
+    """Create a folder (and any missing parents) in the workspace."""
+    target = resolve(ctx, path)
+    if target.exists():
+        return f"{_rel(ctx, target)} already exists."
+    target.mkdir(parents=True)
+    rel = _rel(ctx, target)
+    jid = ctx.store.add_journal(conversation_id=ctx.conversation_id, action="mkdir", path=rel)
+    return ToolOutput(f"Created folder {rel}.", ui={"journal_id": jid, "path": rel})

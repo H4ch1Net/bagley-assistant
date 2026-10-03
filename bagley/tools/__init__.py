@@ -51,6 +51,16 @@ class ToolContext:
     store: Store
     http: httpx.AsyncClient
     conversation_id: str | None = None
+    runtime: Any = None  # bagley.runtime.Runtime, for tools that use shared services.
+
+
+@dataclass
+class ToolOutput:
+    """Return this from a tool to attach data for the UI only (a diff, images, a revert handle).
+    ``result`` is what the model sees."""
+
+    result: Any
+    ui: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -103,6 +113,11 @@ class Tool:
         return out
 
     async def invoke(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """Run the tool and return the text for the model."""
+        return (await self.run(args, ctx))[0]
+
+    async def run(self, args: dict[str, Any], ctx: ToolContext) -> tuple[str, dict[str, Any]]:
+        """Run the tool and return the text for the model plus UI-only data."""
         kwargs = self.coerce(args)
         call_args = (ctx,) if self.wants_ctx else ()
         if inspect.iscoroutinefunction(self.func):
@@ -113,7 +128,9 @@ class Tool:
             result = await asyncio.wait_for(coro, timeout=self.timeout)
         except asyncio.TimeoutError as exc:
             raise ToolError(f"Timed out after {self.timeout:g}s") from exc
-        return format_result(result)
+        if isinstance(result, ToolOutput):
+            return format_result(result.result), result.ui
+        return format_result(result), {}
 
 
 def format_result(result: Any) -> str:

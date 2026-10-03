@@ -589,6 +589,27 @@ kbd {
   font: 12.5px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
+.tool-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 12px 8px 46px;
+  font-size: 12.5px;
+}
+.diffstat { display: inline-flex; gap: 6px; font: 12px var(--font-mono); }
+.diffstat .add, .diff .add { color: var(--ok); }
+.diffstat .del, .diff .del { color: var(--danger); }
+.tool-bar .btn { height: 26px; padding: 0 8px; }
+.diff { white-space: pre; overflow-x: auto; }
+.diff span { display: block; }
+.diff .add { background: rgb(74 222 128 / .08); }
+.diff .del { background: var(--danger-soft); }
+.diff .hunk { color: var(--accent); }
+.diff .meta { color: var(--text-3); }
+.tool-media { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; }
+.tool-media img {
+  display: block; max-width: 100%; max-height: 360px;
+  border-radius: var(--r-sm); border: 1px solid var(--border); background: #fff;
+}
+
 .approval {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 10px 12px; border-top: 1px solid var(--border);

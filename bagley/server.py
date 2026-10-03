@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from bagley import __version__
+from bagley import __version__, journal
 from bagley.agent import Agent, RunRequest
 from bagley.config import (
     LOOPBACK_HOSTS,
@@ -394,10 +394,27 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     @app.get("/api/conversations/{cid}")
     async def get_conversation(cid: str) -> dict[str, Any]:
-        conv = rt().store.get_conversation(cid)
+        store = rt().store
+        conv = store.get_conversation(cid)
         if not conv:
             raise HTTPException(404, "Conversation not found.")
-        return {"conversation": conv, "messages": rt().store.list_messages(cid)}
+        if conv.get("unread"):
+            store.set_unread(cid, False)
+            conv["unread"] = 0
+        messages = store.list_messages(cid)
+        uis = [m["meta"]["ui"] for m in messages if m["meta"].get("ui", {}).get("journal_id")]
+        reverted = store.reverted_ids([ui["journal_id"] for ui in uis])
+        for ui in uis:
+            ui["reverted"] = ui["journal_id"] in reverted
+        return {"conversation": conv, "messages": messages}
+
+    @app.post("/api/journal/{jid}/revert")
+    async def revert_change(jid: int) -> dict[str, Any]:
+        try:
+            entry = await asyncio.to_thread(journal.revert, rt().store, rt().config, jid)
+        except journal.JournalError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return entry
 
     @app.patch("/api/conversations/{cid}")
     async def rename_conversation(cid: str, body: RenameBody) -> dict[str, Any]:
