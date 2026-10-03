@@ -237,9 +237,10 @@ Bagley can act on your behalf, so it is locked down by default:
 - It listens on `127.0.0.1` only. When bound to another address it requires a token, which `bagley` prints in the URL.
 - The server rejects foreign `Host` headers (DNS rebinding) and cross-origin requests and WebSocket connections, so other websites cannot drive it.
 - File tools are confined to the workspace folder, symlinks included.
-- Web tools refuse loopback and private network addresses, re-checked on every redirect.
-- `write_file`, `run_command` and untrusted MCP tools wait for your approval. Shell access is off unless you enable it.
-- The UI loads nothing from the internet. Markdown from the model is sanitized before rendering.
+- Web tools refuse loopback and private network addresses, re-check every redirect, and connect to the exact address they checked, so DNS rebinding can't point them at your network. Downloads are capped in size.
+- `write_file`, `run_command` and untrusted MCP tools wait for your approval. Shell access is off unless you enable it, and stopping a command ends everything it started.
+- A saved API key is cleared when the server URL changes, and a key set through `BAGLEY_API_KEY` locks the server URL, so the key only goes where you configured it.
+- The UI loads nothing from the internet and sends a strict Content-Security-Policy. Model output is sanitized: no images, frames or forms, so a prompt-injected page can't make the browser leak data.
 
 ## Architecture
 

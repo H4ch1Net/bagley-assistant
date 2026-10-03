@@ -197,4 +197,8 @@ def resolve_preferences(
     except ValidationError as exc:
         names = ", ".join(PREFERENCE_ENV[str(e["loc"][0])] for e in exc.errors() if e["loc"])
         raise SystemExit(f"Invalid environment configuration: {names}\n{exc}") from exc
-    return prefs, set(overrides)
+    locked = set(overrides)
+    if "api_key" in locked:
+        # A key from the environment must only ever go to the server it was configured for.
+        locked |= {"provider", "base_url"}
+    return prefs, locked

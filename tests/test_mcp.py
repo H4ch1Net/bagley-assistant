@@ -55,3 +55,33 @@ async def test_invalid_config_is_reported(tmp_path):
     registry = Registry()
     await McpManager(config, registry).start()
     assert registry.errors[0]["source"] == "mcp"
+
+
+async def test_malformed_output_fails_pending_calls_quickly(tmp_path):
+    script = tmp_path / "bad_server.py"
+    script.write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    msg = json.loads(line)\n"
+        "    if 'id' not in msg: continue\n"
+        "    if msg['method'] == 'initialize':\n"
+        "        print(5); print(json.dumps({'jsonrpc': '2.0', 'id': 'weird', 'error': 'x'}))\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': {}}), flush=True)\n"
+        "    elif msg['method'] == 'tools/list':\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'tools': [{'name': 't'}]}}), flush=True)\n"
+        "    else:\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'error': 'plain string'}), flush=True)\n"
+    )
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        json.dumps({"mcpServers": {"bad": {"command": sys.executable, "args": [str(script)]}}})
+    )
+    registry = Registry()
+    manager = McpManager(config, registry)
+    await manager.start()
+    try:
+        assert manager.status()[0]["state"] == "running"
+        with pytest.raises(ToolError, match="plain string"):
+            await registry.get("bad__t").func()
+    finally:
+        await manager.stop()

@@ -143,7 +143,15 @@ class OpenAIProvider(Provider):
     @staticmethod
     def _http_error(status: int, text: str, model: str) -> LLMError:
         lower = text.lower()
-        if "tool" in lower and any(w in lower for w in ("support", "jinja", "not allowed")):
+        markers = (
+            "support",
+            "jinja",
+            "not allowed",
+            "tool choice",
+            "tool_choice",
+            "tool-call-parser",
+        )
+        if "tool" in lower and any(w in lower for w in markers):
             return ToolsUnsupportedError(text, status=status)
         if status == 404 or "model_not_found" in lower or "no such model" in lower:
             return LLMError(

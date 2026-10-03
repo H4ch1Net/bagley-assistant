@@ -13,7 +13,6 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
@@ -32,7 +31,13 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from bagley import __version__
 from bagley.agent import Agent, RunRequest
-from bagley.config import LOOPBACK_HOSTS, SECRET_PREFERENCES, ServerConfig
+from bagley.config import (
+    LOOPBACK_HOSTS,
+    PREFERENCE_ENV,
+    SECRET_PREFERENCES,
+    ServerConfig,
+    env_preferences,
+)
 from bagley.llm import LLMError, ToolCall
 from bagley.prompts import PERSONAS
 from bagley.runtime import Runtime
@@ -98,15 +103,18 @@ class GuardMiddleware:
         await self.app(scope, receive, send)
 
     def _authorized(self, scope: Scope, headers: dict[str, str]) -> bool:
-        token = self.config.token
         auth = headers.get("authorization", "")
-        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], token):
+        if auth.startswith("Bearer ") and self._matches(auth[7:].strip()):
             return True
-        cookie = SimpleCookie()
-        with contextlib.suppress(Exception):
-            cookie.load(headers.get("cookie", ""))
-        morsel = cookie.get(TOKEN_COOKIE)
-        return bool(morsel and hmac.compare_digest(morsel.value, token))
+        # Parse by hand: other apps on this host can set cookies SimpleCookie chokes on.
+        for part in headers.get("cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == TOKEN_COOKIE and self._matches(value):
+                return True
+        return False
+
+    def _matches(self, supplied: str) -> bool:
+        return hmac.compare_digest(supplied.encode(), self.config.token.encode())
 
     async def _set_cookie_redirect(self, send: Send, path: str) -> None:
         cookie = f"{TOKEN_COOKIE}={self.config.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
@@ -238,9 +246,12 @@ def _public_preferences(runtime: Runtime) -> dict[str, Any]:
     values = prefs.model_dump()
     for key in SECRET_PREFERENCES:
         values[f"has_{key}"] = bool(values.pop(key))
+    from_env = env_preferences(runtime.env)
     return {
         "values": values,
         "locked": sorted(locked),
+        # Which variable locks each field (an env API key also pins the server it is sent to).
+        "locked_by": {k: PREFERENCE_ENV[k if k in from_env else "api_key"] for k in locked},
         "personas": {
             k: {"label": v["label"], "description": v["description"]} for k, v in PERSONAS.items()
         },
@@ -432,20 +443,35 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         )
         if not clean:
             raise HTTPException(400, "Invalid file name.")
-        body = await request.body()
-        if len(body) > MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                413, f"Files up to {MAX_UPLOAD_BYTES // 1_000_000} MB can be attached."
-            )
-        folder = Path(rt().config.workspace or ".") / "uploads"
+        too_big = HTTPException(
+            413, f"Files up to {MAX_UPLOAD_BYTES // 1_000_000} MB can be attached."
+        )
+        length = request.headers.get("content-length") or "0"
+        if not length.isdigit():
+            raise HTTPException(400, "Invalid Content-Length.")
+        if int(length) > MAX_UPLOAD_BYTES:
+            raise too_big
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_UPLOAD_BYTES:
+                raise too_big
+        workspace = Path(rt().config.workspace or ".").resolve()
+        folder = workspace / "uploads"
         folder.mkdir(parents=True, exist_ok=True)
-        target = folder / clean
-        stem, suffix = target.stem, target.suffix
-        n = 1
-        while target.exists():
-            n += 1
-            target = folder / f"{stem}-{n}{suffix}"
-        target.write_bytes(body)
+        if folder.is_symlink() or workspace not in folder.resolve().parents:
+            raise HTTPException(400, "The uploads folder must be inside the workspace.")
+        stem, suffix = Path(clean).stem, Path(clean).suffix
+        for n in range(1, 1000):
+            target = folder / (clean if n == 1 else f"{stem}-{n}{suffix}")
+            try:
+                with target.open("xb") as fh:  # Exclusive create: never follows or replaces links.
+                    fh.write(body)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise HTTPException(409, "Too many files with that name.")
         return {"path": f"uploads/{target.name}", "size": len(body)}
 
     @app.get("/api/memories")

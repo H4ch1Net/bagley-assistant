@@ -61,6 +61,10 @@ def test_preferences(client):
     assert updated["values"]["persona"] == "bagley"  # Locked by the environment.
     assert updated["values"]["has_api_key"] is True
 
+    # Moving to another server drops the saved key, so it can't be sent to an attacker's host.
+    moved = client.put("/api/preferences", json={"base_url": "http://elsewhere:9000"}).json()
+    assert moved["values"]["has_api_key"] is False
+
     bad = client.put("/api/preferences", json={"temperature": 5})
     assert bad.status_code == 422 and "temperature" in bad.json()["detail"]
 
@@ -164,6 +168,26 @@ def test_guard_blocks_rebinding_and_cross_origin(client):
         pass
 
 
+def test_env_api_key_locks_server_url(make_runtime):
+    rt = make_runtime(env={"BAGLEY_API_KEY": "sk-env"})
+    with TestClient(create_app(rt), base_url="http://localhost") as c:
+        body = c.put("/api/preferences", json={"base_url": "http://attacker:9000"}).json()
+        assert {"api_key", "base_url", "provider"} <= set(body["locked"])
+        assert body["locked_by"]["base_url"] == "BAGLEY_API_KEY"
+        assert body["values"]["base_url"] == "http://mock"
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="symlinks need privileges on Windows")
+def test_upload_never_writes_through_symlinks(client, tmp_path):
+    uploads = client.runtime.config.workspace / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.txt"
+    (uploads / "notes.txt").symlink_to(outside)  # Dangling link pointing out of the workspace.
+    resp = client.put("/api/workspace/uploads/notes.txt", content=b"data")
+    assert resp.json()["path"] == "uploads/notes-2.txt"
+    assert not outside.exists()
+
+
 def test_token_auth(make_runtime):
     rt = make_runtime()
     rt.config.token = "s3cret"
@@ -174,4 +198,12 @@ def test_token_auth(make_runtime):
         assert c.get("/api/health").status_code == 200  # Cookie now set.
         c.cookies.clear()
         assert c.get("/api/health").status_code == 401
+        junk = {"cookie": 'ui_state={"sidebar": true}; bagley_token=s3cret'}
+        assert c.get("/api/health", headers=junk).status_code == 200
+        assert (
+            c.get(
+                "/api/health", headers={"authorization": "Bearer é".encode("latin-1")}
+            ).status_code
+            == 401
+        )
         assert c.get("/api/health", headers={"authorization": "Bearer s3cret"}).status_code == 200

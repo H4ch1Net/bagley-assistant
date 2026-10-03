@@ -50,42 +50,83 @@ def estimate_tokens(message: dict[str, Any]) -> int:
     return size // 3 + 8
 
 
-def fit_history(history: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
-    """Keep the newest messages that fit in ``budget`` tokens, starting at a user message, and
-    drop tool calls whose results are missing (and vice versa)."""
-    picked: list[dict[str, Any]] = []
-    used = 0
-    for msg in reversed(history):
-        cost = estimate_tokens(msg)
-        if picked and used + cost > budget:
-            break
-        picked.append(msg)
-        used += cost
-    picked.reverse()
-    while picked and picked[0]["role"] != "user":
-        picked.pop(0)
-    if picked and estimate_tokens(picked[0]) > budget:  # One huge message: keep its tail.
-        keep = max(200, budget * 3)
-        picked[0] = {**picked[0], "content": "…" + picked[0]["content"][-keep:]}
+def _shrink(message: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    content = message.get("content") or ""
+    if len(content) <= max_chars:
+        return message
+    cut = len(content) - max_chars
+    return {
+        **message,
+        "content": f"{content[:max_chars]}\n…[{cut} characters trimmed to fit the context window]",
+    }
 
-    answered = {m["tool_call_id"] for m in picked if m["role"] == "tool"}
+
+def fit_history(history: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
+    """Choose the messages to send within ``budget`` tokens.
+
+    The current turn (the last user message and everything after it) is always kept, with its
+    user text and tool results trimmed if it is too big on its own. Older messages are added
+    newest first while they fit, starting at a user message. Tool calls are only kept together
+    with the results that directly follow them, which strict OpenAI-compatible servers require.
+    """
+    last_user = max((i for i, m in enumerate(history) if m["role"] == "user"), default=None)
+    if last_user is None:
+        return []
+    older, current = history[:last_user], list(history[last_user:])
+    if sum(map(estimate_tokens, current)) > budget:
+        bulky = {i for i, m in enumerate(current) if m["role"] in ("user", "tool")}
+        fixed = sum(estimate_tokens(m) for i, m in enumerate(current) if i not in bulky)
+        share = max(400, (budget - fixed) * 3 // max(1, len(bulky)))
+        current = [_shrink(m, share) if i in bulky else m for i, m in enumerate(current)]
+    used = sum(map(estimate_tokens, current))
+    kept: list[dict[str, Any]] = []
+    for msg in reversed(older):
+        used += estimate_tokens(msg)
+        if used > budget:
+            break
+        kept.append(msg)
+    kept.reverse()
+    while kept and kept[0]["role"] != "user":
+        kept.pop(0)
+    return _pair_tool_calls(kept + current)
+
+
+def _pair_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    called: set[str] = set()
-    for m in picked:
-        msg: dict[str, Any] = {"role": m["role"], "content": m.get("content") or ""}
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        content = m.get("content") or ""
+        if m["role"] == "tool":  # A result without its call directly before it.
+            i += 1
+            continue
         if m["role"] == "assistant" and m.get("tool_calls"):
-            calls = [c for c in m["tool_calls"] if c["id"] in answered]
+            j = i + 1
+            results: dict[str, dict[str, Any]] = {}
+            ids = {c["id"] for c in m["tool_calls"]}
+            while j < len(messages) and messages[j]["role"] == "tool":
+                r = messages[j]
+                if r.get("tool_call_id") in ids and r["tool_call_id"] not in results:
+                    results[r["tool_call_id"]] = r
+                j += 1
+            calls = [c for c in m["tool_calls"] if c["id"] in results]
             if calls:
-                msg["tool_calls"] = calls
-                called.update(c["id"] for c in calls)
-            elif not msg["content"]:
-                continue
-        if m["role"] == "tool":
-            if m.get("tool_call_id") not in called:
-                continue
-            msg["tool_call_id"] = m["tool_call_id"]
-            msg["name"] = m.get("name") or ""
-        out.append(msg)
+                out.append({"role": "assistant", "content": content, "tool_calls": calls})
+                out.extend(
+                    {
+                        "role": "tool",
+                        "content": results[c["id"]].get("content") or "",
+                        "tool_call_id": c["id"],
+                        "name": results[c["id"]].get("name") or "",
+                    }
+                    for c in calls
+                )
+            elif content:
+                out.append({"role": "assistant", "content": content})
+            i = j
+            continue
+        out.append({"role": m["role"], "content": content})
+        i += 1
     return out
 
 
@@ -95,6 +136,36 @@ class Agent:
         self._background: set[asyncio.Task[None]] = set()
 
     async def run(self, req: RunRequest, emit: Emit, approve: Approve) -> None:
+        """Answer one message. Only one run per conversation at a time, across all windows."""
+        busy = self.rt.busy
+        if req.conversation_id and req.conversation_id in busy:
+            await emit(
+                {"type": "error", "message": "This chat is already answering in another window."}
+            )
+            await emit(
+                {
+                    "type": "run.end",
+                    "conversation_id": req.conversation_id,
+                    "stopped": False,
+                    "stats": {},
+                }
+            )
+            return
+        claimed: list[str] = []
+
+        def claim(cid: str) -> None:
+            busy.add(cid)
+            claimed.append(cid)
+
+        try:
+            await self._run(req, emit, approve, claim)
+        finally:
+            for cid in claimed:
+                busy.discard(cid)
+
+    async def _run(
+        self, req: RunRequest, emit: Emit, approve: Approve, claim: Callable[[str], None]
+    ) -> None:
         rt = self.rt
         store = rt.store
         prefs, _ = rt.preferences()
@@ -126,6 +197,7 @@ class Agent:
             conv = store.create_conversation(heuristic_title(req.text))
             await emit({"type": "conversation", "conversation": conv})
         cid = conv["id"]
+        claim(cid)
 
         user_message = None
         history = store.list_messages(cid)
@@ -210,11 +282,13 @@ class Agent:
                     tool_calls=[c.to_message() for c in step.calls] or None,
                     meta={"model": model, **{k: v for k, v in step_stats.items() if v is not None}},
                 )
-                await emit({"type": "message", "message": assistant})
-                if not step.calls:
-                    break
+                # Hand the step over before the next await, so a stop during the send below
+                # neither saves the text twice nor leaves its tool calls without results.
                 pending_calls = list(step.calls)
                 step = _Step()
+                await emit({"type": "message", "message": assistant})
+                if not pending_calls:
+                    break
                 while pending_calls:
                     await self._run_tool(cid, pending_calls[0], emit, approve, prefs.disabled_tools)
                     pending_calls.pop(0)
@@ -267,9 +341,8 @@ class Agent:
             prompt_mode=mode == "prompt",
         )
         reserve = min(2048, prefs.context_tokens // 4)
-        budget = max(512, prefs.context_tokens - reserve - len(system) // 3)
-        if mode == "native":
-            budget -= len(json.dumps([t.spec() for t in tools])) // 3
+        specs = len(json.dumps([t.spec() for t in tools])) // 3 if mode == "native" else 0
+        budget = max(512, prefs.context_tokens - reserve - len(system) // 3 - specs)
         history = fit_history(rt.store.list_messages(cid), budget)
         if mode != "native":
             history = to_prompt_mode(history)

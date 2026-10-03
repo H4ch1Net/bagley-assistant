@@ -75,7 +75,18 @@ def test_calculator(expr, expected):
     assert safe_eval(expr) == expected
 
 
-@pytest.mark.parametrize("expr", ["__import__('os')", "1/0", "9**9**9", "().__class__", "x + 1"])
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "__import__('os')",
+        "1/0",
+        "9**9**9",
+        "().__class__",
+        "x + 1",
+        "perm(1500000)",
+        "comb(10**7, 5000)",
+    ],
+)
 def test_calculator_rejects(expr):
     with pytest.raises(ToolError):
         safe_eval(expr)
@@ -130,6 +141,24 @@ async def test_weather_tool(ctx):
     assert "mainly clear" in result
 
 
+@pytest.mark.anyio
+async def test_fetch_pins_the_validated_ip(ctx):
+    from tests.mock_llm import WEB_REQUESTS
+
+    fetch = build_registry(ctx.config).get("fetch_webpage")
+    out = await fetch.invoke({"url": "https://93.184.215.14:8443/page"}, ctx)
+    sent = WEB_REQUESTS[-1]
+    assert sent.url.host == "93.184.215.14"
+    assert sent.headers["host"] == "93.184.215.14:8443"
+    assert sent.extensions["sni_hostname"] == "93.184.215.14"
+    assert '"title": "Example"' in out and "https://93.184.215.14:8443/page" in out
+
+    with pytest.raises(ToolError, match="private or local"):
+        await fetch.invoke({"url": "http://93.184.215.14/to-private"}, ctx)
+    with pytest.raises(ToolError, match="too large"):
+        await fetch.invoke({"url": "http://93.184.215.14/huge"}, ctx)
+
+
 def test_duckduckgo_parser():
     results = parse_duckduckgo(DDG_HTML, 5)
     assert results[0] == {
@@ -165,6 +194,19 @@ def test_shell_only_when_enabled(config):
     assert build_registry(config).get("run_command") is None
     config.enable_shell = True
     assert build_registry(config).get("run_command").risk == "confirm"
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+async def test_shell_timeout_kills_child_processes(ctx):
+    import time
+
+    ctx.config.enable_shell = True
+    run = build_registry(ctx.config).get("run_command")
+    started = time.monotonic()
+    with pytest.raises(ToolError, match="timed out"):
+        await run.invoke({"command": "sleep 30; echo done", "timeout": 1}, ctx)
+    assert time.monotonic() - started < 10
 
 
 @pytest.mark.anyio

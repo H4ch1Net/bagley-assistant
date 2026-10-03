@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from bagley.agent import Agent, RunRequest, fit_history
+from bagley.agent import Agent, RunRequest, estimate_tokens, fit_history
 from tests.mock_llm import Reply
 
 pytestmark = pytest.mark.anyio
@@ -127,6 +127,20 @@ async def test_rejected_runs_still_end(make_runtime, recorder):
     assert rt.store.list_conversations() == []
 
 
+async def test_one_run_per_conversation(make_runtime, recorder, mock):
+    rt = make_runtime()
+    await run(rt, recorder, "hi")
+    cid = recorder.of("conversation")[0]["conversation"]["id"]
+    rt.busy.add(cid)  # As if another window were answering.
+    recorder.events.clear()
+    await run(rt, recorder, "again", conversation_id=cid)
+    assert recorder.of("error")[0]["message"].startswith("This chat is already answering")
+    assert len(rt.store.list_messages(cid)) == 2
+    rt.busy.clear()
+    await run(rt, recorder, "again", conversation_id=cid)
+    assert not rt.busy
+
+
 async def test_edit_replaces_last_exchange(make_runtime, recorder, mock):
     rt = make_runtime()
     await run(rt, recorder, "hi")
@@ -212,3 +226,45 @@ def test_fit_history_respects_budget():
     out = fit_history(history, budget=400)
     assert 1 <= len(out) < 20
     assert out[0]["role"] == "user"
+
+
+def test_fit_history_keeps_current_turn_when_tool_results_are_huge():
+    call = lambda i: {"id": f"c{i}", "function": {"name": "fetch_webpage", "arguments": "{}"}}  # noqa: E731
+    history = [
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "Compare these two pages"},
+        {"role": "assistant", "content": "", "tool_calls": [call(1)]},
+        {"role": "tool", "content": "a" * 12_000, "tool_call_id": "c1", "name": "fetch_webpage"},
+        {"role": "assistant", "content": "", "tool_calls": [call(2)]},
+        {"role": "tool", "content": "b" * 12_000, "tool_call_id": "c2", "name": "fetch_webpage"},
+    ]
+    out = fit_history(history, budget=3000)
+    roles = [m["role"] for m in out]
+    assert roles[-5:] == ["user", "assistant", "tool", "assistant", "tool"]
+    assert out[-5]["content"] == "Compare these two pages"
+    assert all("trimmed" in m["content"] for m in out if m["role"] == "tool")
+    assert sum(estimate_tokens(m) for m in out) <= 3000
+
+
+def test_fit_history_drops_interleaved_results():
+    call = {"id": "x", "function": {"name": "calculate", "arguments": "{}"}}
+    history = [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "", "tool_calls": [call]},
+        {"role": "user", "content": "q2"},
+        {"role": "tool", "content": "late", "tool_call_id": "x", "name": "calculate"},
+    ]
+    assert [m["role"] for m in fit_history(history, 10_000)] == ["user", "user"]
+
+
+def test_vllm_without_tool_parser_triggers_text_mode():
+    from bagley.llm import ToolsUnsupportedError
+    from bagley.llm.openai import OpenAIProvider
+
+    err = OpenAIProvider._http_error(
+        400,
+        '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set',
+        "m",
+    )
+    assert isinstance(err, ToolsUnsupportedError)

@@ -61,6 +61,8 @@ _CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf}
 
 def safe_eval(expression: str) -> float | int:
     """Evaluate an arithmetic expression without ``eval``."""
+    if len(expression) > 500:
+        raise ToolError("Expression is too long.")
     expr = expression.replace("^", "**").replace("×", "*").replace("÷", "/")
     expr = _THOUSANDS.sub("", expr)
     try:
@@ -89,8 +91,10 @@ def safe_eval(expression: str) -> float | int:
             and not node.keywords
         ):
             args = [walk(a) for a in node.args]
-            if node.func.id == "factorial" and args and args[0] > 5000:
-                raise ToolError("Factorial argument too large.")
+            if node.func.id in ("factorial", "comb", "perm") and any(
+                isinstance(a, (int, float)) and abs(a) > 5000 for a in args
+            ):
+                raise ToolError(f"{node.func.id} argument too large.")
             return _FUNCS[node.func.id](*args)
         raise ToolError(f"Unsupported syntax in expression: {ast.unparse(node)}")
 

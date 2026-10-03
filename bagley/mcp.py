@@ -126,35 +126,49 @@ class McpServer:
 
     async def _read_stdout(self) -> None:
         assert self._proc and self._proc.stdout
-        while True:
-            line = await self._proc.stdout.readline()
-            if not line:
-                break
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "method" in msg and "id" in msg:  # Request from the server.
-                reply: dict[str, Any] = {"jsonrpc": "2.0", "id": msg["id"]}
-                if msg["method"] == "ping":
-                    reply["result"] = {}
-                else:
-                    reply["error"] = {"code": -32601, "message": "Method not supported"}
-                with contextlib.suppress(McpError):
-                    await self._send(reply)
-                continue
-            fut = self._pending.get(msg.get("id"))
-            if fut and not fut.done():
-                if "error" in msg:
-                    fut.set_exception(McpError(str(msg["error"].get("message", msg["error"]))))
-                else:
-                    fut.set_result(msg.get("result", {}))
+        try:
+            while line := await self._proc.stdout.readline():
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(msg, dict):
+                    await self._dispatch(msg)
+        except (ValueError, OSError) as exc:  # Line over the size limit, or a broken pipe.
+            self.error = f"Stopped reading from the server: {exc}"
+            if self._proc.returncode is None:
+                self._proc.kill()
         self.state = "exited"
         detail = self._stderr[-1] if self._stderr else ""
         self.error = self.error or f"Process exited. {detail}".strip()
         for fut in self._pending.values():
             if not fut.done():
-                fut.set_exception(McpError(f"MCP server '{self.name}' exited. {detail}".strip()))
+                fut.set_exception(
+                    McpError(f"MCP server '{self.name}' stopped. {self.error}".strip())
+                )
+
+    async def _dispatch(self, msg: dict[str, Any]) -> None:
+        if "method" in msg and "id" in msg:  # Request from the server.
+            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": msg["id"]}
+            if msg["method"] == "ping":
+                reply["result"] = {}
+            else:
+                reply["error"] = {"code": -32601, "message": "Method not supported"}
+            with contextlib.suppress(McpError, OSError):
+                await self._send(reply)
+            return
+        rid = msg.get("id")
+        fut = self._pending.get(rid) if isinstance(rid, int) else None
+        if not fut or fut.done():
+            return
+        if "error" in msg:
+            err = msg["error"]
+            fut.set_exception(
+                McpError(str(err.get("message", err) if isinstance(err, dict) else err))
+            )
+        else:
+            result = msg.get("result", {})
+            fut.set_result(result if isinstance(result, dict) else {"content": []})
 
     async def _read_stderr(self) -> None:
         assert self._proc and self._proc.stderr

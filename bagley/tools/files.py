@@ -97,12 +97,16 @@ def search_files(
 ) -> dict[str, Any]:
     """Find lines containing some text across files in the workspace."""
     target = resolve(ctx, path)
+    root = Path(ctx.config.workspace or ".").resolve()
     needle = query.lower()
     matches: list[dict[str, Any]] = []
     for dirpath, dirnames, filenames in os.walk(target):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             file = Path(dirpath) / name
+            real = file.resolve()
+            if real != root and root not in real.parents:  # Symlink pointing outside.
+                continue
             try:
                 if file.stat().st_size > 2_000_000:
                     continue

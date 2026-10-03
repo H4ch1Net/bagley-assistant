@@ -40,6 +40,7 @@ class Runtime:
         self.http = httpx.AsyncClient(transport=tool_transport, timeout=20.0)
         self.llm_transport = llm_transport
         self.prompt_mode_models: set[str] = set()
+        self.busy: set[str] = set()  # Conversations with a run in progress.
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
@@ -67,6 +68,11 @@ class Runtime:
         }
         if "base_url" in changes:
             changes["base_url"] = str(changes["base_url"]).strip().rstrip("/")
+        moved = any(
+            k in changes and changes[k] != getattr(current, k) for k in ("provider", "base_url")
+        )
+        if moved and "api_key" not in changes:
+            changes["api_key"] = ""  # Never send a saved key to a different server.
         try:
             Preferences.model_validate({**current.model_dump(), **changes})
         except ValidationError as exc:

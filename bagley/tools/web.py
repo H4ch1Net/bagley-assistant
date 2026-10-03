@@ -21,12 +21,14 @@ USER_AGENT = (
 MAX_PAGE_BYTES = 3_000_000
 
 
-async def check_url(url: str, allow_private: bool) -> str:
+async def check_url(url: str, allow_private: bool) -> list[str]:
+    """Validate a URL and return the IP addresses it resolves to (empty if private hosts are
+    allowed). Raises ``ToolError`` for non-http(s) URLs and private or local addresses."""
     parts = urlsplit(url.strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ToolError("Only http(s) URLs with a host name are supported.")
     if allow_private:
-        return url
+        return []
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             parts.hostname,
@@ -35,6 +37,7 @@ async def check_url(url: str, allow_private: bool) -> str:
         )
     except socket.gaierror as exc:
         raise ToolError(f"Couldn't resolve host {parts.hostname}.") from exc
+    ips = []
     for info in infos:
         ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
         if not ip.is_global:
@@ -42,18 +45,51 @@ async def check_url(url: str, allow_private: bool) -> str:
                 f"{parts.hostname} points to a private or local address. "
                 "Set BAGLEY_ALLOW_PRIVATE_URLS=true to allow this."
             )
-    return url
+        ips.append(str(ip))
+    return ips
 
 
-async def safe_get(ctx: ToolContext, url: str, **kwargs: Any) -> httpx.Response:
-    """GET with redirect handling that re-checks every hop against the private-network rule."""
+def _pinned(url: str, ip: str) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """Rewrite ``url`` to connect to the already-validated ``ip``, so a second DNS lookup
+    (DNS rebinding) can't redirect the request to a private address. TLS still verifies the
+    certificate against the original host name."""
+    parts = urlsplit(url)
+    host = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    target = parts._replace(netloc=netloc).geturl()
+    host_header = parts.hostname or ""
+    if parts.port:
+        host_header += f":{parts.port}"
+    extensions = {"sni_hostname": parts.hostname} if parts.scheme == "https" else {}
+    return target, {"Host": host_header}, extensions
+
+
+async def fetch_limited(
+    ctx: ToolContext, url: str, *, max_bytes: int = MAX_PAGE_BYTES, timeout: float = 20.0
+) -> tuple[str, httpx.Response]:
+    """GET ``url`` following redirects, re-checking every hop against the private-network rule
+    and reading at most ``max_bytes``. Returns the final URL and a fully read response."""
     for _ in range(6):
-        await check_url(url, ctx.config.allow_private_urls)
-        resp = await ctx.http.get(url, follow_redirects=False, **kwargs)
-        if resp.is_redirect and "location" in resp.headers:
-            url = urljoin(url, resp.headers["location"])
-            continue
-        return resp
+        ips = await check_url(url, ctx.config.allow_private_urls)
+        target, headers, extensions = _pinned(url, ips[0]) if ips else (url, {}, {})
+        headers["User-Agent"] = USER_AGENT
+        async with ctx.http.stream(
+            "GET",
+            target,
+            headers=headers,
+            extensions=extensions,
+            follow_redirects=False,
+            timeout=timeout,
+        ) as resp:
+            if resp.is_redirect and "location" in resp.headers:
+                url = urljoin(url, resp.headers["location"])
+                continue
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body += chunk
+                if len(body) > max_bytes:
+                    raise ToolError("Page is too large to read.")
+            return url, httpx.Response(resp.status_code, headers=resp.headers, content=bytes(body))
     raise ToolError("Too many redirects.")
 
 
@@ -121,13 +157,11 @@ async def fetch_webpage(
     """Download a web page and return its readable text. Use it to read links the user shares or
     to dig into a search result."""
     try:
-        resp = await safe_get(ctx, url, headers={"User-Agent": USER_AGENT}, timeout=20.0)
+        final_url, resp = await fetch_limited(ctx, url)
     except httpx.HTTPError as exc:
         raise ToolError(f"Couldn't fetch {url}: {exc.__class__.__name__}") from exc
     if resp.status_code >= 400:
         raise ToolError(f"{url} returned HTTP {resp.status_code}.")
-    if len(resp.content) > MAX_PAGE_BYTES:
-        raise ToolError("Page is too large to read.")
     ctype = resp.headers.get("content-type", "")
     if "html" in ctype or resp.text.lstrip().startswith("<"):
         title, text = html_to_text(resp.text)
@@ -138,7 +172,7 @@ async def fetch_webpage(
     max_chars = max(500, min(max_chars, 20_000))
     truncated = len(text) > max_chars
     return {
-        "url": str(resp.url),
+        "url": final_url,
         "title": title,
         "text": text[:max_chars] + ("…" if truncated else ""),
         "truncated": truncated,

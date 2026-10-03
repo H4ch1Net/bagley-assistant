@@ -38,6 +38,7 @@ const TABS = [
 ];
 
 const locked = (key) => state.prefs?.locked.includes(key);
+const lockedBy = (key) => state.prefs?.locked_by?.[key] || ENV_NAMES[key];
 const value = (key) => state.prefs?.values[key];
 
 export async function savePrefs(changes) {
@@ -61,7 +62,7 @@ function flashSaved() {
 }
 
 function field(label, control, { help, key, id } = {}) {
-  const lockNote = key && locked(key) ? el("span", { class: "lock", title: `Set by the ${ENV_NAMES[key]} environment variable` }, icon("lock", "icon-xs"), ENV_NAMES[key]) : null;
+  const lockNote = key && locked(key) ? el("span", { class: "lock", title: `Locked by the ${lockedBy(key)} environment variable` }, icon("lock", "icon-xs"), lockedBy(key)) : null;
   if (key && locked(key)) control.disabled = true;
   if (id) control.id = id;
   return el("div", { class: "field" },
