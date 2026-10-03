@@ -270,3 +270,27 @@ def test_automations_api(client):
     assert done["last_status"] == "ok" and done["conversation_id"]
     assert client.delete(f"/api/automations/{created['id']}").status_code == 204
     assert client.get("/api/automations").json() == []
+
+
+def test_model_manager(client):
+    assert [m["name"] for m in client.get("/api/models/loaded").json()] == ["qwen3:8b"]
+    assert client.post("/api/models/unload", json={"name": "qwen3:8b"}).json() == {"ok": True}
+    assert client.get("/api/models/loaded").json() == []
+
+    client.put("/api/preferences", json={"model": "llama3.2:3b"})
+    assert client.delete("/api/models/llama3.2:3b").status_code == 204
+    assert "llama3.2:3b" not in [m["name"] for m in client.get("/api/models").json()["models"]]
+    assert client.get("/api/preferences").json()["values"]["model"] == ""
+    assert client.delete("/api/models/llama3.2:3b").status_code == 404
+
+
+def test_workspace_images_are_served_safely(client, tmp_path):
+    ws = client.runtime.config.workspace
+    (ws / "charts").mkdir(parents=True, exist_ok=True)
+    (ws / "charts" / "a.png").write_bytes(b"\x89PNG\r\n")
+    (ws / "notes.md").write_text("secret")
+    (tmp_path / "outside.png").write_bytes(b"\x89PNG")
+    ok = client.get("/api/workspace/raw", params={"path": "charts/a.png"})
+    assert ok.status_code == 200 and ok.headers["content-type"] == "image/png"
+    for bad in ("notes.md", "../outside.png", "/../outside.png", "charts/missing.png", "."):
+        assert client.get("/api/workspace/raw", params={"path": bad}).status_code == 404

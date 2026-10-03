@@ -268,7 +268,74 @@ export class Settings {
       ),
     );
     if (locked("model")) modelSelect.disabled = true;
-    if (state.health?.provider === "ollama" || (!state.health && value("provider") !== "openai")) panel.append(this.pullSection());
+    if (state.health?.provider === "ollama" || (!state.health && value("provider") !== "openai")) {
+      panel.append(this.installedSection(), this.pullSection());
+    }
+  }
+
+  installedSection() {
+    const list = el("div", { class: "list" });
+    const memory = el("div", { class: "help", "aria-live": "polite" });
+    const refresh = async () => {
+      const loaded = await api.get("/api/models/loaded").catch(() => []);
+      const inMemory = new Map(loaded.map((m) => [m.name, m]));
+      const vram = loaded.reduce((sum, m) => sum + (m.size_vram || 0), 0);
+      memory.textContent = loaded.length
+        ? `${loaded.length} in memory · ${formatBytes(vram)} on the GPU`
+        : "Nothing in memory. A model loads on its first message and unloads after a few idle minutes.";
+      const rows = state.models.map((m) => this.modelRow(m, inMemory.get(m.name), refresh));
+      list.replaceChildren(...(rows.length ? rows : [el("div", { class: "list-empty", text: "No models installed." })]));
+    };
+    refresh();
+    return el("div", { class: "section" },
+      el("div", { class: "section-title", text: "Installed models" }),
+      memory,
+      list,
+    );
+  }
+
+  modelRow(m, loaded, refresh) {
+    const active = state.health?.model === m.name;
+    const unload = loaded && el("button", { class: "btn btn-sm", type: "button", title: "Free its memory now" }, icon("power", "icon-xs"), "Unload");
+    unload?.addEventListener("click", async () => {
+      unload.disabled = true;
+      try {
+        await api.post("/api/models/unload", { name: m.name });
+        toast(`Unloaded ${m.name}`);
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
+      await refresh();
+    });
+    const remove = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Delete", "aria-label": `Delete ${m.name}` }, icon("trash-2", "icon-sm"));
+    remove.addEventListener("click", async () => {
+      const ok = await confirmDialog({
+        title: `Delete ${m.name}?`,
+        message: `This frees ${formatBytes(m.size || 0)} of disk. You can download it again later.`,
+        confirm: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api.del(`/api/models/${encodeURIComponent(m.name)}`);
+        toast(`Deleted ${m.name}`);
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
+      await this.onModelsChanged();
+      this.refresh();
+    });
+    const facts = [m.parameter_size, m.quantization, m.size ? formatBytes(m.size) : ""].filter(Boolean).join(" · ");
+    return el("div", { class: "list-item model-row", dataset: { name: m.name } },
+      el("span", { class: "tool-icon" }, icon(loaded ? "activity" : "hard-drive", "icon-sm")),
+      el("div", { class: "grow" },
+        el("div", { class: "name" }, m.name,
+          active ? el("span", { class: "badge", text: "in use" }) : null,
+          loaded ? el("span", { class: "badge badge-ok", text: `in memory${loaded.size_vram ? ` · ${formatBytes(loaded.size_vram)} VRAM` : ""}` }) : null),
+        facts ? el("div", { class: "desc", text: facts }) : null,
+      ),
+      el("div", { class: "inline", style: "gap:4px" }, unload, remove),
+    );
   }
 
   async saveConnection(changes) {

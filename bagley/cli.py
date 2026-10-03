@@ -1,4 +1,4 @@
-"""Command line entry point: ``bagley [serve|chat|doctor]``."""
+"""Command line entry point: ``bagley [serve|chat|ask|doctor]``."""
 
 from __future__ import annotations
 
@@ -317,6 +317,76 @@ def cmd_chat(args: argparse.Namespace) -> int:
         return 0
 
 
+MAX_STDIN = 60_000
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    """One question, answer on stdout. Piped input is attached; progress goes to stderr."""
+    from bagley.agent import Agent, RunRequest
+    from bagley.llm import ToolCall
+    from bagley.runtime import Runtime
+    from bagley.tools import Tool
+
+    question = " ".join(args.question).strip()
+    piped = "" if sys.stdin.isatty() else sys.stdin.read()
+    if len(piped) > MAX_STDIN:
+        piped = piped[:MAX_STDIN] + "\n…[input truncated]"
+    if piped.strip():
+        question = f"{question or 'Look at this.'}\n\n<input>\n{piped.strip()}\n</input>"
+    if not question:
+        print('Usage: bagley ask "question"  (or pipe text in)', file=sys.stderr)
+        return 2
+    err = Style(sys.stderr)
+
+    def note(text: str) -> None:
+        if not args.quiet:
+            print(err.dim(text), file=sys.stderr, flush=True)
+
+    async def run() -> int:
+        rt = Runtime(_config(args))
+        await rt.start()
+        failed = False
+        ended_line = True
+
+        async def emit(event: dict[str, Any]) -> None:
+            nonlocal failed, ended_line
+            kind = event["type"]
+            if kind == "text.delta":
+                sys.stdout.write(event["text"])
+                sys.stdout.flush()
+                ended_line = event["text"].endswith("\n")
+            elif kind == "tool.start":
+                call = event["call"]
+                note(f"⚙ {call['name']} {json.dumps(call['arguments'], ensure_ascii=False)[:100]}")
+            elif kind == "notice":
+                note(event["message"])
+            elif kind == "error":
+                failed = True
+                print(err.bad(event["message"]), file=sys.stderr)
+                if event.get("hint"):
+                    print(err.dim(event["hint"]), file=sys.stderr)
+
+        async def approve(call: ToolCall, tool: Tool) -> bool:
+            if not args.yes:
+                note(f"✗ skipped {tool.name}: it needs approval (pass --yes to allow)")
+            return bool(args.yes)
+
+        try:
+            await Agent(rt).run(
+                RunRequest(text=question, conversation_id=args.conversation), emit, approve
+            )
+        finally:
+            await rt.aclose()
+        if not ended_line:
+            sys.stdout.write("\n")
+        return 1 if failed else 0
+
+    try:
+        return asyncio.run(run())
+    except KeyboardInterrupt:
+        return 130
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bagley", description="Local-first AI assistant.")
     parser.add_argument("--version", action="version", version=f"bagley {__version__}")
@@ -340,6 +410,12 @@ def build_parser() -> argparse.ArgumentParser:
     chat = sub.add_parser("chat", help="Chat in the terminal")
     chat.add_argument("-c", "--conversation", help="Continue a conversation by id")
 
+    ask = sub.add_parser("ask", help="Ask one question; the answer goes to stdout")
+    ask.add_argument("question", nargs="*", help="The question. Text piped in is attached.")
+    ask.add_argument("-y", "--yes", action="store_true", help="Allow tools that need approval")
+    ask.add_argument("-q", "--quiet", action="store_true", help="Don't show tool activity")
+    ask.add_argument("-c", "--conversation", help="Continue a conversation by id")
+
     sub.add_parser("doctor", help="Check configuration and model server")
     common(parser)
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
@@ -355,5 +431,5 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
     command = args.command or "serve"
-    handlers = {"serve": cmd_serve, "chat": cmd_chat, "doctor": cmd_doctor}
+    handlers = {"serve": cmd_serve, "chat": cmd_chat, "ask": cmd_ask, "doctor": cmd_doctor}
     return handlers[command](args)

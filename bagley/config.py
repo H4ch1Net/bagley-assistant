@@ -74,6 +74,7 @@ class ServerConfig:
     plugins_dir: Path | None = None
     mcp_config: Path | None = None
     enable_shell: bool = False
+    python: str = ""
     allow_private_urls: bool = False
     searxng_url: str = ""
     token: str = ""
@@ -102,6 +103,7 @@ class ServerConfig:
             plugins_dir=Path(env["BAGLEY_PLUGINS_DIR"]) if env.get("BAGLEY_PLUGINS_DIR") else None,
             mcp_config=Path(env["BAGLEY_MCP_CONFIG"]) if env.get("BAGLEY_MCP_CONFIG") else None,
             enable_shell=_bool(env.get("BAGLEY_ENABLE_SHELL")),
+            python=env.get("BAGLEY_PYTHON") or "",
             allow_private_urls=_bool(env.get("BAGLEY_ALLOW_PRIVATE_URLS")),
             searxng_url=(env.get("BAGLEY_SEARXNG_URL") or "").rstrip("/"),
             token=env.get("BAGLEY_TOKEN") or "",

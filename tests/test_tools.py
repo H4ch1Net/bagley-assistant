@@ -273,3 +273,42 @@ async def test_open_on_computer(ctx, monkeypatch):
         await tool.invoke({"target": "file:///etc/passwd"}, ctx)
     with pytest.raises(ToolError, match="does not exist"):
         await tool.invoke({"target": "nope.txt"}, ctx)
+
+
+@pytest.mark.anyio
+async def test_run_python_output_and_clean_traceback(ctx):
+    ctx.config.enable_shell = True
+    run = build_registry(ctx.config).get("run_python")
+    assert run.risk == "confirm"
+    out, ui = await run.run({"code": "import os\nprint(sum(range(10)), os.getcwd())"}, ctx)
+    assert '"exit_code": 0' in out and "45" in out and str(ctx.config.workspace.name) in out
+    assert ui == {}
+    out, _ = await run.run({"code": "x = 1\n1 / x\nraise ValueError('nope')"}, ctx)
+    assert '"exit_code": 1' in out and 'File \\"<snippet>\\", line 3' in out
+    assert "runner.py" not in out and "ValueError: nope" in out
+
+
+@pytest.mark.anyio
+async def test_run_python_shows_images(ctx):
+    ctx.config.enable_shell = True
+    run = build_registry(ctx.config).get("run_python")
+    png = (
+        "import base64\nopen('dot.png','wb').write(base64.b64decode("
+        "'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='))"
+    )
+    out, ui = await run.run({"code": png}, ctx)
+    assert ui["images"] == [{"path": "dot.png", "url": "/api/workspace/raw?path=dot.png"}]
+    assert "dot.png (shown to the user)" in out
+
+
+@pytest.mark.anyio
+async def test_run_python_keeps_open_figures(ctx):
+    pytest.importorskip("matplotlib")
+    ctx.config.enable_shell = True
+    run = build_registry(ctx.config).get("run_python")
+    code = "import matplotlib.pyplot as plt\nplt.plot([1, 3, 2])\nplt.title('Sales')\nplt.show()"
+    out, ui = await run.run({"code": code}, ctx)
+    assert '"exit_code": 0' in out, out
+    [image] = ui["images"]
+    assert image["path"].startswith("charts/") and image["path"].endswith("figure-1.png")
+    assert (ctx.config.workspace / image["path"]).read_bytes()[:4] == b"\x89PNG"

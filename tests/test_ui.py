@@ -270,3 +270,27 @@ def test_create_and_run_a_reminder(page, stack):
     page.locator(".toast >> text=Open").click()
     expect(page.locator(".turn-assistant .prose")).to_contain_text("Reminder: Stand up and stretch")
     expect(page.locator(".stat").filter(has_text="Automations")).to_contain_text("1 active")
+
+
+def test_python_chart_shows_inline(page, stack):
+    pytest.importorskip("matplotlib")
+    from bagley.tools import shell
+
+    stack.runtime.registry.add_module(shell, "builtin")
+    code = "import matplotlib.pyplot as plt\nplt.bar(['a', 'b'], [3, 5])"
+    stack.mock.script = [Reply(tool_calls=[("run_python", {"code": code})]), Reply(text="Done.")]
+    send(page, "chart a and b")
+    page.click(".approval .btn-primary")
+    image = page.locator(".tool-media img")
+    expect(image).to_have_count(1)
+    assert image.evaluate("img => img.decode().then(() => img.naturalWidth)") > 100
+
+
+def test_model_manager_unloads(page, stack):
+    page.keyboard.press("Control+,")
+    page.click("#tab-model")
+    row = page.locator(".model-row[data-name='qwen3:8b']")
+    expect(row).to_contain_text("in memory")
+    row.locator("button:has-text('Unload')").click()
+    expect(row).not_to_contain_text("in memory")
+    expect(page.locator(".model-row")).to_have_count(len(stack.mock.models))

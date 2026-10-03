@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
@@ -400,6 +401,41 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
+    @app.get("/api/models/loaded")
+    async def loaded_models() -> list[dict[str, Any]]:
+        try:
+            return await (await rt().provider()).loaded()
+        except LLMError:
+            return []
+
+    @app.post("/api/models/unload")
+    async def unload_model(body: PullBody) -> dict[str, Any]:
+        provider = await rt().provider()
+        if not provider.supports_pull:
+            raise HTTPException(400, "This model server manages memory itself.")
+        try:
+            await provider.unload(body.name.strip())
+        except LLMError as exc:
+            raise HTTPException(502, exc.message) from exc
+        return {"ok": True}
+
+    @app.delete("/api/models/{name:path}", status_code=204)
+    async def delete_model(name: str) -> Response:
+        runtime = rt()
+        provider = await runtime.provider()
+        if not provider.supports_pull:
+            raise HTTPException(400, "This model server can't delete models.")
+        try:
+            await provider.delete(name)
+        except LLMError as exc:
+            status = exc.status if exc.status and exc.status < 500 else 502
+            raise HTTPException(status, exc.message) from exc
+        prefs, _ = runtime.preferences()
+        if name in (prefs.model, prefs.embedding_model):
+            field = "model" if name == prefs.model else "embedding_model"
+            runtime.update_preferences({field: ""})
+        return Response(status_code=204)
+
     @app.get("/api/preferences")
     async def get_preferences() -> dict[str, Any]:
         return _public_preferences(rt())
@@ -474,6 +510,23 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
                 "Content-Disposition": f'attachment; filename="{ascii_name}.md"; '
                 f"filename*=UTF-8''{quote(name)}.md"
             },
+        )
+
+    @app.get("/api/workspace/raw")
+    async def workspace_image(path: str) -> Response:
+        """Serve an image from the workspace, e.g. a chart made by run_python."""
+        root = Path(rt().config.workspace or ".").resolve()
+        target = (root / path.replace("\\", "/").lstrip("/")).resolve()
+        types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+        types |= {".gif": "image/gif", ".webp": "image/webp"}
+        if root not in target.parents or target.suffix.lower() not in types:
+            raise HTTPException(404, "Not found.")
+        if not target.is_file():
+            raise HTTPException(404, "Not found.")
+        return FileResponse(
+            target,
+            media_type=types[target.suffix.lower()],
+            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
         )
 
     @app.put("/api/workspace/uploads/{name}", status_code=201)
