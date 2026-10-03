@@ -97,7 +97,9 @@ export class Sidebar {
       "aria-current": active ? "page" : null,
       onclick: () => this.onOpen(conv.id),
     }, conv.title);
-    const node = el("div", { class: `conv-item${active ? " active" : ""}${conv.unread && !active ? " unread" : ""}`, dataset: { id: conv.id } },
+    const unread = conv.unread && !active;
+    if (unread) link.append(el("span", { class: "sr-only", text: ", unread" }));
+    const node = el("div", { class: `conv-item${active ? " active" : ""}${unread ? " unread" : ""}`, dataset: { id: conv.id } },
       link,
       running ? el("span", { class: "spinner running", title: "Working…" }) : null,
       el("div", { class: "conv-actions" },

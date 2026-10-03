@@ -108,7 +108,8 @@ body {
 
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; }
-button:disabled { cursor: default; }
+button:disabled, button[aria-disabled="true"] { cursor: default; }
+.icon-btn[aria-disabled="true"] { opacity: .45; }
 a { color: var(--accent); text-underline-offset: 2px; }
 img, svg, canvas { display: block; }
 [hidden] { display: none !important; }
@@ -338,7 +339,7 @@ kbd {
 }
 .conv-item.active .conv-link, .conv-item:hover .conv-link { color: var(--text); }
 .conv-item .running { margin-right: 8px; color: var(--accent); }
-.conv-item.unread .conv-link { color: var(--text); font-weight: 600; }
+.conv-item.unread .conv-link { color: var(--text); font-weight: 600; padding-right: 24px; }
 .conv-item.unread::after {
   content: ""; position: absolute; right: 10px; top: 50%;
   width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%;

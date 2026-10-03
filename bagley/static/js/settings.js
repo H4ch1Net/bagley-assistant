@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { bus, setUi, state } from "./state.js";
-import { confirmDialog, toast } from "./ui.js";
+import { confirmDialog, keepToasts, toast } from "./ui.js";
 import { $, debounce, el, formatBytes, icon, relTime } from "./util.js";
 import { voice } from "./voice.js";
 
@@ -63,15 +63,28 @@ function flashSaved() {
   flashSaved.timer = setTimeout(() => node.replaceChildren(), 1600);
 }
 
+let fieldSeq = 0;
+
 function field(label, control, { help, key, id } = {}) {
   const lockNote = key && locked(key) ? el("span", { class: "lock", title: `Locked by the ${lockedBy(key)} environment variable` }, icon("lock", "icon-xs"), lockedBy(key)) : null;
   if (key && locked(key)) control.disabled = true;
-  if (id) control.id = id;
+  // Label the form control itself, even when it sits in a wrapper next to a button.
+  const target = control.matches("input, select, textarea") ? control : control.querySelector("input, select, textarea");
+  if (target) target.id = id || target.id || `field-${++fieldSeq}`;
   return el("div", { class: "field" },
-    el("label", { for: id || null }, label, lockNote),
+    el("label", { for: target?.id || null }, label, lockNote),
     control,
     help ? el("div", { class: "help", text: help }) : null,
   );
+}
+
+/** Redraw `box` and give focus back to the same control if it had it. */
+function keepFocus(box, redraw) {
+  const active = document.activeElement;
+  const name = (n) => n.getAttribute("aria-label") || n.textContent.trim();
+  const label = box.contains(active) && active !== box ? name(active) : null;
+  redraw();
+  if (label) [...box.querySelectorAll("button, input, select")].find((n) => name(n) === label && !n.disabled)?.focus();
 }
 
 function toggleRow(title, help, checked, onChange, { key, label } = {}) {
@@ -139,6 +152,7 @@ export class Settings {
       ),
       el("div", { class: "settings" }, tabs, panel),
     );
+    keepToasts();
     this[`render_${this.tab}`](panel);
   }
 
@@ -405,16 +419,24 @@ export class Settings {
       ? "e.g. Give me today's weather for Porto and the top 3 tech headlines."
       : kind === "reminder" ? "e.g. Stand up and stretch." : "Optional: what to do when it changes, e.g. tell me if the price drops below 800." });
     const url = el("input", { class: "input mono", placeholder: "https://…", spellcheck: "false" });
-    const when = el("input", { class: "input", list: "schedule-presets", value: kind === "watch" ? "every 1 hour" : kind === "reminder" ? "in 30 minutes" : "weekdays at 08:00" });
+    const when = el("input", { class: "input", id: "auto-when", list: "schedule-presets", value: kind === "watch" ? "every 1 hour" : kind === "reminder" ? "in 30 minutes" : "weekdays at 08:00" });
+    const draft = this.automationDraft || {};
+    name.value = draft.name || "";
+    prompt.value = draft.prompt || "";
+    url.value = draft.url || "";
     const presets = el("datalist", { id: "schedule-presets" },
       ...["in 30 minutes", "at 18:00", "every 1 hour", "every 6 hours", "daily at 08:00", "weekdays at 09:00", "weekends at 10:00", "mondays at 09:00"].map((v) => el("option", { value: v })));
     const hint = el("div", { class: "help", "aria-live": "polite" });
+    let previewSeq = 0;
     const check = debounce(async () => {
+      const seq = ++previewSeq;
       try {
         const p = await api.get(`/api/automations/preview?kind=${kind}&schedule=${encodeURIComponent(when.value)}`);
+        if (seq !== previewSeq) return;
         hint.textContent = `${p.description} · next ${relTime(p.next_run)}`;
         hint.classList.remove("error-text");
       } catch (err) {
+        if (seq !== previewSeq) return;
         hint.textContent = err.message;
         hint.classList.add("error-text");
       }
@@ -427,6 +449,7 @@ export class Settings {
       try {
         await api.post("/api/automations", { kind, name: name.value.trim(), prompt: prompt.value.trim(), schedule: when.value, target: kind === "watch" ? url.value.trim() : null });
         toast(kind === "reminder" ? "Reminder set" : kind === "watch" ? "Watching the page" : "Automation created");
+        this.automationDraft = null;
         await this.onAutomationsChanged();
         this.refresh();
       } catch (err) {
@@ -436,7 +459,11 @@ export class Settings {
     });
 
     const seg = el("div", { class: "segmented", role: "group", "aria-label": "Kind" },
-      ...kinds.map(([id, ic, label]) => el("button", { type: "button", "aria-pressed": String(kind === id), onclick: () => { this.newKind = id; this.refresh(); } }, icon(ic, "icon-sm"), label)));
+      ...kinds.map(([id, ic, label]) => el("button", { type: "button", "aria-pressed": String(kind === id), onclick: () => {
+        this.automationDraft = { name: name.value, prompt: prompt.value, url: url.value };
+        this.newKind = id;
+        this.refresh();
+      } }, icon(ic, "icon-sm"), label)));
 
     this.automationBox = el("div", { class: "section" });
     panel.append(
@@ -447,7 +474,7 @@ export class Settings {
       el("div", { class: "section" },
         el("div", { class: "section-title", text: "New" }),
         el("div", { class: "field" }, seg, el("div", { class: "help", text: kinds.find((k) => k[0] === kind)[3] })),
-        el("div", { class: "field-row" }, field("Name", name), el("div", { class: "field" }, el("label", { text: "When" }), when, hint)),
+        el("div", { class: "field-row" }, field("Name", name), el("div", { class: "field" }, el("label", { for: "auto-when", text: "When" }), when, hint)),
         presets,
         kind === "watch" ? field("Page URL", url) : null,
         field(kind === "reminder" ? "Message" : kind === "watch" ? "When it changes (optional)" : "Instructions", prompt),
@@ -463,10 +490,10 @@ export class Settings {
   renderAutomationList() {
     if (!this.automationBox?.isConnected) return;
     const items = state.automations;
-    this.automationBox.replaceChildren(
+    keepFocus(this.automationBox, () => this.automationBox.replaceChildren(
       el("div", { class: "section-title", text: `Your automations · ${items.length}` }),
       el("div", { class: "list" }, ...(items.length ? items.map((a) => this.automationRow(a)) : [el("div", { class: "list-empty", text: "Nothing scheduled yet." })])),
-    );
+    ));
   }
 
   automationRow(a) {
@@ -483,10 +510,14 @@ export class Settings {
         toast(err.message, { type: "error" });
       }
     });
-    const run = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Run now", "aria-label": `Run ${a.name} now`, disabled: a.running }, icon("play", "icon-sm"));
+    const run = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Run now", "aria-label": `Run ${a.name} now`, "aria-disabled": String(a.running) }, icon("play", "icon-sm"));
     run.addEventListener("click", async () => {
-      run.disabled = true;
-      await api.post(`/api/automations/${a.id}/run`).catch((err) => toast(err.message, { type: "error" }));
+      if (run.getAttribute("aria-disabled") === "true") return;
+      run.setAttribute("aria-disabled", "true");
+      await api.post(`/api/automations/${a.id}/run`).catch((err) => {
+        run.setAttribute("aria-disabled", "false");
+        toast(err.message, { type: "error" });
+      });
     });
     const remove = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Delete", "aria-label": `Delete ${a.name}` }, icon("trash-2", "icon-sm"));
     remove.addEventListener("click", async () => {
@@ -533,10 +564,13 @@ export class Settings {
 
     const query = el("input", { class: "input", placeholder: "Try a search, e.g. budget for Q3", "aria-label": "Search the knowledge base" });
     const results = el("div", { class: "kb-results" });
+    let searchSeq = 0;
     query.addEventListener("input", debounce(async () => {
+      const seq = ++searchSeq;
       const q = query.value.trim();
       if (!q) return results.replaceChildren();
       const hits = await api.get(`/api/knowledge/search?q=${encodeURIComponent(q)}`).catch(() => []);
+      if (seq !== searchSeq) return;
       results.replaceChildren(...(hits.length ? hits.map((h) => el("div", { class: "kb-hit" },
         el("div", { class: "name" }, el("span", { class: "mono", text: h.path }), el("span", { class: `badge${h.match === "keyword" ? "" : " badge-accent"}`, text: h.match })),
         el("div", { class: "desc", text: h.text })))
@@ -566,9 +600,14 @@ export class Settings {
     const semantic = k.embedding_model
       ? el("span", { class: "badge badge-accent", text: `search by meaning · ${k.embedding_model}` })
       : el("span", { class: "badge", text: "keyword search" });
-    const reindex = el("button", { class: "btn btn-sm", type: "button", disabled: indexing, onclick: async () => {
-      await api.post("/api/knowledge/reindex");
-      toast("Reindexing…");
+    // Stays enabled while indexing (a second request is ignored) so keyboard focus survives redraws.
+    const reindex = el("button", { class: "btn btn-sm", type: "button", "aria-label": "Reindex now", onclick: async () => {
+      try {
+        await api.post("/api/knowledge/reindex");
+        toast("Reindexing…");
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
     } }, icon("refresh-cw", "icon-sm"), "Reindex now");
 
     const embedModels = state.models.filter((m) => /embed|minilm|bge-|e5-|gte-/i.test(m.name));
@@ -596,7 +635,7 @@ export class Settings {
       pullBox.append(el("div", { class: "help", style: "margin:4px 0 8px", text: "For search by meaning (not just keywords), download a small local embedding model:" }), pull, progress, status);
     }
 
-    box.replaceChildren(
+    keepFocus(box, () => box.replaceChildren(
       el("div", { class: "section" },
         el("div", { class: "kb-status" },
           indexing ? el("span", { class: "spinner" }) : icon("library", "icon-sm"),
@@ -625,7 +664,7 @@ export class Settings {
         field("Embedding model", embedSelect, { help: "Automatic uses an installed embedding model if there is one." }),
         pullBox,
       ),
-    );
+    ));
   }
 
   // Tools -----------------------------------------------------------------------------------

@@ -294,3 +294,21 @@ def test_model_manager_unloads(page, stack):
     row.locator("button:has-text('Unload')").click()
     expect(row).not_to_contain_text("in memory")
     expect(page.locator(".model-row")).to_have_count(len(stack.mock.models))
+
+
+def test_automation_form_keeps_draft_labels_and_toasts(page, stack):
+    page.click("#automations-btn")
+    page.get_by_label("Name").fill("Laptop price")
+    page.get_by_label("Instructions").fill("Tell me if it drops below 800")
+    page.click(".segmented >> text=Watch page")
+    expect(page.get_by_label("Name")).to_have_value("Laptop price")
+    expect(page.get_by_label("When it changes")).to_have_value("Tell me if it drops below 800")
+    page.get_by_label("Page URL").fill("https://shop.example.com/x1")
+    expect(page.get_by_label("When", exact=True)).to_have_value("every 1 hour")
+    page.click("button:has-text('Create')")
+    toast = page.locator(".toast >> text=Watching the page")
+    expect(toast).to_be_visible()
+    page.click("#tab-knowledge")  # Redrawing the dialog must not swallow the toast.
+    expect(toast).to_be_visible()
+    page.click("#tab-automations")
+    expect(page.get_by_label("Name")).to_have_value("")

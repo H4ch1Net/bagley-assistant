@@ -15,11 +15,19 @@ function placeToasts(box) {
   if (box.parentElement !== home) home.append(box);
 }
 
+let toastBox = null;
+
+/** Put the toast stack back where it can be seen, after a dialog redraws or closes. */
+export function keepToasts() {
+  if (toastBox) placeToasts(toastBox);
+}
+// "close" doesn't bubble, but capture listeners still see it.
+document.addEventListener("close", keepToasts, true);
+
 /**
  * Show a toast. Options: `type` ("info" | "error"), `action` ({label, run}), `duration` in ms.
  * Returns a function that dismisses it.
  */
-let toastBox = null;
 
 export function toast(message, { type = "info", action, duration } = {}) {
   // Held by reference: dialogs replace their contents, which can detach the stack.
@@ -60,6 +68,7 @@ export function confirmDialog({ title, message, confirm = "Confirm", danger = fa
         el("button", { class: `btn ${danger ? "btn-danger" : "btn-primary"}`, type: "button", text: confirm, onclick: () => dialog.close("ok") }),
       ),
     );
+    keepToasts();
     dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
     dialog.showModal();
     dialog.querySelector(".dialog-foot .btn:last-child").focus();
