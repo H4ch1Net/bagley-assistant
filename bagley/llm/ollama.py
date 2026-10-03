@@ -211,3 +211,52 @@ class OllamaProvider(Provider):
                         yield data
         except httpx.HTTPError as exc:
             raise self._unreachable(exc) from exc
+
+    async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        try:
+            resp = await self._client.post(
+                "/api/embed", json={"model": model, "input": texts}, timeout=120.0
+            )
+        except httpx.HTTPError as exc:
+            raise self._unreachable(exc) from exc
+        if resp.status_code >= 400:
+            raise self._http_error(resp.status_code, await self._error_text(resp), model)
+        return resp.json().get("embeddings", [])
+
+    async def loaded(self) -> list[dict[str, Any]]:
+        try:
+            resp = await self._client.get("/api/ps", timeout=10.0)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._unreachable(exc) from exc
+        return [
+            {
+                "name": m.get("name") or m.get("model", ""),
+                "size": m.get("size"),
+                "size_vram": m.get("size_vram"),
+                "expires_at": m.get("expires_at"),
+                "context_length": m.get("context_length"),
+            }
+            for m in resp.json().get("models", [])
+        ]
+
+    async def unload(self, model: str) -> None:
+        try:
+            resp = await self._client.post(
+                "/api/generate", json={"model": model, "keep_alive": 0}, timeout=30.0
+            )
+        except httpx.HTTPError as exc:
+            raise self._unreachable(exc) from exc
+        if resp.status_code >= 400:
+            raise self._http_error(resp.status_code, await self._error_text(resp), model)
+
+    async def delete(self, model: str) -> None:
+        try:
+            resp = await self._client.request(
+                "DELETE", "/api/delete", json={"model": model}, timeout=30.0
+            )
+        except httpx.HTTPError as exc:
+            raise self._unreachable(exc) from exc
+        if resp.status_code >= 400:
+            raise self._http_error(resp.status_code, await self._error_text(resp), model)
+        self._caps.pop(model, None)

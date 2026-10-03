@@ -90,6 +90,15 @@ async function loadMemories() {
   renderStats();
 }
 
+async function loadKnowledge() {
+  try {
+    state.knowledge = await api.get("/api/knowledge");
+  } catch {
+    return;
+  }
+  renderStats();
+}
+
 async function loadAutomations() {
   try {
     state.automations = await api.get("/api/automations");
@@ -247,6 +256,11 @@ socket.on("notification", (ev) => {
 
 socket.on("conversations.changed", () => sidebar.refresh());
 socket.on("automations.changed", () => loadAutomations());
+socket.on("knowledge.changed", (ev) => {
+  state.knowledge = ev.status;
+  renderStats();
+  settings.renderKnowledge();
+});
 
 socket.on("title", (ev) => {
   sidebar.update({ id: ev.conversation_id, title: ev.title });
@@ -376,6 +390,11 @@ if (voice.canListen) {
 
 // Model picker -----------------------------------------------------------------------------------
 
+/** Embedding models can't chat; keep them out of the chat model pickers. */
+function chatModels() {
+  return state.models.filter((m) => !/embed|minilm|bge-|e5-|gte-/i.test(m.name));
+}
+
 function currentModel() {
   return state.prefs?.values.model || state.health?.model || "";
 }
@@ -398,7 +417,7 @@ $("#model-btn").addEventListener("click", () => {
       menu.append(el("div", { class: "menu-note", text: state.health?.ok ? "No models installed yet." : "Model server is not reachable." }));
     }
     const current = currentModel();
-    for (const m of state.models) {
+    for (const m of chatModels()) {
       menu.append(el("button", {
         class: "menu-item", type: "button", role: "option", "aria-selected": String(m.name === current), disabled: lockedModel,
         onclick: async () => {
@@ -490,7 +509,8 @@ function renderStats() {
       used ? ctxBar : null,
     ),
     stat("wrench", "Tools", el("span", { class: "v", text: `${enabledTools} enabled` }), () => settings.open("tools")),
-    stat("calendar-clock", "Automate", el("span", { class: "v", text: automationText() }), () => settings.open("automations")),
+    stat("calendar-clock", "Automations", el("span", { class: "v", text: automationText() }), () => settings.open("automations")),
+    stat("library", "Knowledge", el("span", { class: "v", text: state.knowledge ? (state.knowledge.state === "indexing" ? "Indexing…" : `${state.knowledge.files} files`) : "–" }), () => settings.open("knowledge")),
     stat("bookmark", "Memory", el("span", { class: "v", text: `${state.memories.length} ${state.memories.length === 1 ? "fact" : "facts"}` }), () => settings.open("memory")),
     voice.canSpeak
       ? stat(state.ui.speak ? "volume-2" : "volume-x", "Voice", el("span", { class: "v", text: state.ui.speak ? "Reads replies" : "Muted" }), () => {
@@ -742,7 +762,7 @@ async function boot() {
   updateComposer();
   setStatus("idle");
   try {
-    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), sidebar.refresh()]);
+    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), sidebar.refresh()]);
     state.info = info;
   } catch (err) {
     toast(err.message, { type: "error" });

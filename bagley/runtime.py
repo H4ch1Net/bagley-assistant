@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from bagley.automations import Scheduler
 from bagley.config import Preferences, ServerConfig, resolve_preferences
+from bagley.knowledge import KnowledgeBase, is_embedding_model
 from bagley.llm import LLMError, Provider, create_provider
 from bagley.mcp import McpManager
 from bagley.store import Store
@@ -45,6 +46,7 @@ class Runtime:
         self.busy: set[str] = set()  # Conversations with a run in progress.
         self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
         self.scheduler = Scheduler(self)
+        self.knowledge = KnowledgeBase(self)
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
@@ -54,9 +56,12 @@ class Runtime:
         await self.mcp.start()
         if background:
             self.scheduler.start()
+            self.knowledge.start()
 
     async def aclose(self) -> None:
         await self.scheduler.stop()
+        await self.knowledge.stop()
+        self.knowledge.close()
         await self.mcp.stop()
         if self._provider:
             await self._provider.aclose()
@@ -117,6 +122,7 @@ class Runtime:
                 else "Load a model in your model server."
             )
             raise LLMError("No models are installed.", hint=hint)
+        models = [m for m in models if not is_embedding_model(m.name)] or models
         # Prefer a model that can call tools; capability lookups are cached per model.
         for model in models[:8]:
             if (await provider.capabilities(model.name)).tools:

@@ -140,6 +140,8 @@ class Preferences(BaseModel):
     custom_instructions: str = Field("", max_length=4000)
     disabled_tools: list[str] = Field(default_factory=list)
     smart_titles: bool = True
+    knowledge_folders: list[str] = Field(default_factory=list)
+    embedding_model: str = ""  # "" picks an installed embedding model, "off" disables.
 
 
 PREFERENCE_ENV: dict[str, str] = {

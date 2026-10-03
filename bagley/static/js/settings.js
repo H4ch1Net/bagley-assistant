@@ -33,6 +33,7 @@ const TABS = [
   { id: "model", label: "Model", icon: "cpu" },
   { id: "automations", label: "Automations", icon: "calendar-clock" },
   { id: "tools", label: "Tools", icon: "wrench" },
+  { id: "knowledge", label: "Knowledge", icon: "library" },
   { id: "memory", label: "Memory", icon: "bookmark" },
   { id: "voice", label: "Voice", icon: "volume-2" },
   { id: "appearance", label: "Appearance", icon: "sun" },
@@ -209,10 +210,11 @@ export class Settings {
 
     const modelSelect = el("select", { class: "select mono" });
     const fillModels = () => {
-      const names = state.models.map((m) => m.name);
+      const chat = state.models.filter((m) => !/embed|minilm|bge-|e5-|gte-/i.test(m.name));
+      const names = chat.map((m) => m.name);
       const current = value("model");
       const options = [el("option", { value: "", text: names.length ? `Automatic (${names[0]})` : "Automatic" })];
-      for (const m of state.models) options.push(el("option", { value: m.name, text: [m.name, m.parameter_size].filter(Boolean).join("  ·  ") }));
+      for (const m of chat) options.push(el("option", { value: m.name, text: [m.name, m.parameter_size].filter(Boolean).join("  ·  ") }));
       if (current && !names.includes(current)) options.push(el("option", { value: current, text: `${current} (not installed)` }));
       modelSelect.replaceChildren(...options);
       modelSelect.value = current || "";
@@ -435,6 +437,125 @@ export class Settings {
       ),
       el("div", { class: "inline", style: "gap:2px" }, run, openChat, remove),
       el("label", { class: "switch" }, toggle, el("span")),
+    );
+  }
+
+  // Knowledge -------------------------------------------------------------------------------
+
+  render_knowledge(panel) {
+    this.knowledgeBox = el("div");
+    const pathInput = el("input", { class: "input mono", placeholder: "~/Documents/Notes", spellcheck: "false", "aria-label": "Folder path" });
+    const add = el("button", { class: "btn", type: "button" }, icon("folder-plus", "icon-sm"), "Add folder");
+    const submit = async () => {
+      if (!pathInput.value.trim()) return pathInput.focus();
+      add.disabled = true;
+      try {
+        state.knowledge = await api.post("/api/knowledge/folders", { path: pathInput.value.trim() });
+        pathInput.value = "";
+        toast("Folder added. Indexing…");
+        this.renderKnowledge();
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
+      add.disabled = false;
+    };
+    add.addEventListener("click", submit);
+    pathInput.addEventListener("keydown", (e) => e.key === "Enter" && submit());
+
+    const query = el("input", { class: "input", placeholder: "Try a search, e.g. budget for Q3", "aria-label": "Search the knowledge base" });
+    const results = el("div", { class: "kb-results" });
+    query.addEventListener("input", debounce(async () => {
+      const q = query.value.trim();
+      if (!q) return results.replaceChildren();
+      const hits = await api.get(`/api/knowledge/search?q=${encodeURIComponent(q)}`).catch(() => []);
+      results.replaceChildren(...(hits.length ? hits.map((h) => el("div", { class: "kb-hit" },
+        el("div", { class: "name" }, el("span", { class: "mono", text: h.path }), el("span", { class: `badge${h.match === "keyword" ? "" : " badge-accent"}`, text: h.match })),
+        el("div", { class: "desc", text: h.text })))
+        : [el("div", { class: "list-empty", text: "No matches." })]));
+    }, 250));
+
+    panel.append(
+      el("h3", { text: "Knowledge" }),
+      el("p", { class: "lead", text: "Bagley searches these folders when you ask about your notes and documents. Files are indexed on this computer and never uploaded. Text, Markdown, code, HTML and CSV are supported (PDF too with the pdf extra)." }),
+      this.knowledgeBox,
+      el("div", { class: "section" },
+        el("div", { class: "section-title", text: "Add a folder" }),
+        el("div", { class: "inline" }, pathInput, add),
+        el("div", { class: "help", style: "margin-top:6px", text: "A full path on this computer. Hidden folders and node_modules are skipped." }),
+      ),
+      el("div", { class: "section" }, el("div", { class: "section-title", text: "Search" }), query, results),
+    );
+    this.renderKnowledge();
+  }
+
+  /** Status and folder list; redrawn on index progress without touching the inputs. */
+  renderKnowledge() {
+    const box = this.knowledgeBox;
+    if (!box?.isConnected) return;
+    const k = state.knowledge || { folders: [], files: 0, passages: 0 };
+    const indexing = k.state === "indexing";
+    const semantic = k.embedding_model
+      ? el("span", { class: "badge badge-accent", text: `search by meaning · ${k.embedding_model}` })
+      : el("span", { class: "badge", text: "keyword search" });
+    const reindex = el("button", { class: "btn btn-sm", type: "button", disabled: indexing, onclick: async () => {
+      await api.post("/api/knowledge/reindex");
+      toast("Reindexing…");
+    } }, icon("refresh-cw", "icon-sm"), "Reindex now");
+
+    const embedModels = state.models.filter((m) => /embed|minilm|bge-|e5-|gte-/i.test(m.name));
+    const embedSelect = el("select", { class: "select" },
+      el("option", { value: "", text: "Automatic" }),
+      el("option", { value: "off", text: "Off (keyword search only)" }),
+      ...embedModels.map((m) => el("option", { value: m.name, text: m.name })));
+    embedSelect.value = value("embedding_model") || "";
+    embedSelect.addEventListener("change", async () => {
+      if (await savePrefs({ embedding_model: embedSelect.value })) await api.post("/api/knowledge/reindex");
+    });
+    const canPull = state.health?.provider === "ollama" && !embedModels.length;
+    const pullBox = el("div");
+    if (canPull) {
+      const progress = el("div", { class: "progress", hidden: true }, el("i"));
+      const status = el("div", { class: "pull-status" });
+      const pull = el("button", { class: "btn btn-sm", type: "button" }, icon("hard-drive-download", "icon-sm"), "Download nomic-embed-text (274 MB)");
+      pull.addEventListener("click", async () => {
+        pull.disabled = true;
+        if (await pullModel("nomic-embed-text", { progress, status })) {
+          await this.onModelsChanged();
+          await api.post("/api/knowledge/reindex");
+        } else pull.disabled = false;
+      });
+      pullBox.append(el("div", { class: "help", style: "margin:4px 0 8px", text: "For search by meaning (not just keywords), download a small local embedding model:" }), pull, progress, status);
+    }
+
+    box.replaceChildren(
+      el("div", { class: "section" },
+        el("div", { class: "kb-status" },
+          indexing ? el("span", { class: "spinner" }) : icon("library", "icon-sm"),
+          el("span", { text: indexing ? `Indexing ${k.progress || "…"}` : `${k.files.toLocaleString()} files · ${k.passages.toLocaleString()} passages` }),
+          semantic,
+          el("span", { class: "grow" }),
+          reindex,
+        ),
+        k.error ? el("div", { class: "help error-text", style: "margin-top:6px", text: k.error }) : null,
+        el("div", { class: "list", style: "margin-top:12px" }, ...k.folders.map((f) => el("div", { class: "list-item" },
+          el("span", { class: "tool-icon" }, icon("folder-open", "icon-sm")),
+          el("div", { class: "grow" },
+            el("div", { class: "name" }, f.label, el("span", { class: "badge", text: `${f.files} files` }), f.exists ? null : el("span", { class: "badge badge-danger", text: "missing" })),
+            el("div", { class: "desc mono", text: f.path }),
+          ),
+          f.removable
+            ? el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Remove", "aria-label": `Remove ${f.label}`, onclick: async () => {
+                state.knowledge = await api.del(`/api/knowledge/folders?path=${encodeURIComponent(f.path)}`).catch((err) => (toast(err.message, { type: "error" }), state.knowledge));
+                this.renderKnowledge();
+              } }, icon("x", "icon-sm"))
+            : el("span", { class: "subtle", style: "font-size:12px", text: "always included" }),
+        ))),
+      ),
+      el("div", { class: "section" },
+        el("div", { class: "section-title", text: "Search by meaning" }),
+        field("Embedding model", embedSelect, { help: "Automatic uses an installed embedding model if there is one." }),
+        pullBox,
+      ),
     );
   }
 

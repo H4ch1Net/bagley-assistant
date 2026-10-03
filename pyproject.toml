@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
 screenshots = ["playwright>=1.45"]
+pdf = ["pypdf>=4"]
 
 [project.scripts]
 bagley = "bagley.cli:main"

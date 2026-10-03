@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 
+import httpx
 import uvicorn
 
 from bagley.config import ServerConfig
@@ -60,6 +61,25 @@ class DemoStack:
         return f"http://127.0.0.1:{self.app_port}/"
 
     def seed(self) -> None:
+        notes = self.runtime.config.workspace / "notes"
+        notes.mkdir(parents=True, exist_ok=True)
+        (notes / "q3-plan.md").write_text(
+            "# Q3 plan\n\nMarketing budget is 40k. Hiring two backend engineers.\n\n"
+            "## Risks\n\nThe billing worker still times out under load."
+        )
+        (notes / "lisbon-trip.md").write_text(
+            "# Lisbon trip\n\nFlights booked for March. Hotel in Alfama."
+        )
+        (notes / "reading.md").write_text(
+            "# Reading list\n\n- Designing Data-Intensive Applications\n- The Pragmatic Programmer"
+        )
+        self.mock.models["nomic-embed-text:latest"] = {
+            "capabilities": ["embedding"],
+            "size": 274_000_000,
+            "params": "137M",
+            "family": "nomic-bert",
+        }
+        httpx.post(f"{self.url}api/knowledge/reindex", timeout=10)
         store = self.runtime.store
         store.add_memory("Prefers metric units")
         store.add_memory("Lives in Porto, works as a backend developer")

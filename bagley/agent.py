@@ -345,6 +345,7 @@ class Agent:
             memories=rt.store.list_memories(),
             workspace=str(rt.config.workspace),
             prompt_mode=mode == "prompt",
+            knowledge=rt.knowledge.status(),
         )
         reserve = min(2048, prefs.context_tokens // 4)
         specs = len(json.dumps([t.spec() for t in tools])) // 3 if mode == "native" else 0

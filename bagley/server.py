@@ -251,6 +251,10 @@ class AutomationPatch(BaseModel):
     enabled: bool | None = None
 
 
+class FolderBody(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
 class MemoryBody(BaseModel):
     content: str = Field(min_length=1, max_length=500)
 
@@ -561,6 +565,45 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         background.add(task)
         task.add_done_callback(background.discard)
         return {"started": True}
+
+    @app.get("/api/knowledge")
+    async def knowledge_status() -> dict[str, Any]:
+        return rt().knowledge.status()
+
+    @app.post("/api/knowledge/folders", status_code=201)
+    async def add_knowledge_folder(body: FolderBody) -> dict[str, Any]:
+        path = Path(body.path.strip()).expanduser()
+        if not path.is_absolute():
+            raise HTTPException(422, "Use a full path, e.g. ~/Documents/Notes.")
+        path = path.resolve()
+        if not path.is_dir():
+            raise HTTPException(422, f"{path} is not a folder on this computer.")
+        if path == Path(path.anchor):
+            raise HTTPException(422, "Pick a folder, not a whole drive.")
+        prefs, _ = rt().preferences()
+        if str(path) not in prefs.knowledge_folders:
+            rt().update_preferences({"knowledge_folders": [*prefs.knowledge_folders, str(path)]})
+        rt().knowledge.request_reindex()
+        return rt().knowledge.status()
+
+    @app.delete("/api/knowledge/folders")
+    async def remove_knowledge_folder(path: str) -> dict[str, Any]:
+        prefs, _ = rt().preferences()
+        remaining = [p for p in prefs.knowledge_folders if p != path]
+        if len(remaining) == len(prefs.knowledge_folders):
+            raise HTTPException(404, "That folder is not in the knowledge base.")
+        rt().update_preferences({"knowledge_folders": remaining})
+        await asyncio.to_thread(rt().knowledge.forget_folder, Path(path))
+        return rt().knowledge.status()
+
+    @app.post("/api/knowledge/reindex", status_code=202)
+    async def reindex_knowledge() -> dict[str, Any]:
+        rt().knowledge.request_reindex()
+        return {"started": True}
+
+    @app.get("/api/knowledge/search")
+    async def search_knowledge(q: str, limit: int = 8) -> list[dict[str, Any]]:
+        return await rt().knowledge.search(q, limit)
 
     @app.get("/api/memories")
     async def list_memories() -> list[dict[str, Any]]:

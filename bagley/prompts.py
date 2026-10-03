@@ -69,6 +69,7 @@ def system_prompt(
     memories: list[dict[str, Any]],
     workspace: str,
     prompt_mode: bool,
+    knowledge: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> str:
     now = now or datetime.now().astimezone()
@@ -85,6 +86,17 @@ def system_prompt(
             guide += (
                 f"\n- File tools work inside the workspace folder: {workspace}. Files the user "
                 "attaches are saved there under uploads/; read them with read_file."
+            )
+        if (
+            knowledge
+            and knowledge.get("files")
+            and any(t.name == "search_knowledge" for t in tools)
+        ):
+            labels = ", ".join(f["label"] for f in knowledge["folders"] if f["files"])
+            guide += (
+                f"\n- The user has a private knowledge base of {knowledge['files']} documents ({labels}). "
+                "Use search_knowledge before answering questions about their notes, projects or documents, "
+                "and cite the file paths you used."
             )
         if prompt_mode:
             listing = "\n".join(

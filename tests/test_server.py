@@ -9,6 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 from bagley.server import create_app
 from tests.mock_llm import Reply
 
+BROADCASTS = {"knowledge.changed", "automations.changed", "conversations.changed"}
 WS = "ws://localhost/api/ws"  # The test client defaults to Host "testserver", which the guard rejects.
 
 
@@ -21,11 +22,18 @@ def client(make_runtime, mock):
         yield c
 
 
+def receive(ws):
+    """Next event for this window, skipping background broadcasts."""
+    while (event := json.loads(ws.receive_text()))["type"] in BROADCASTS:
+        pass
+    return event
+
+
 def chat(ws, **message):
     ws.send_text(json.dumps({"type": "chat", **message}))
     events = []
     while True:
-        event = json.loads(ws.receive_text())
+        event = receive(ws)
         events.append(event)
         if event["type"] == "approval.request":
             ws.send_text(
@@ -128,9 +136,9 @@ def test_websocket_approval_flow(client):
 def test_websocket_rejects_concurrent_runs_and_bad_json(client):
     with client.websocket_connect(WS) as ws:
         ws.send_text("not json")
-        assert json.loads(ws.receive_text())["message"] == "Malformed message."
+        assert receive(ws)["message"] == "Malformed message."
         ws.send_text(json.dumps({"type": "ping"}))
-        assert json.loads(ws.receive_text())["type"] == "pong"
+        assert receive(ws)["type"] == "pong"
 
 
 def test_memories_and_tools(client):

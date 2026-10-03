@@ -146,6 +146,19 @@ class Provider(ABC):
     def pull(self, model: str) -> AsyncIterator[dict[str, Any]]:
         raise LLMError("This server cannot download models.")
 
+    async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        raise LLMError("This server does not provide embeddings.")
+
+    async def loaded(self) -> list[dict[str, Any]]:
+        """Models currently in memory (Ollama only)."""
+        return []
+
+    async def unload(self, model: str) -> None:
+        raise LLMError("This server cannot unload models.")
+
+    async def delete(self, model: str) -> None:
+        raise LLMError("This server cannot delete models.")
+
     # Error helpers --------------------------------------------------------------------------
 
     def _unreachable(self, exc: Exception) -> LLMError:

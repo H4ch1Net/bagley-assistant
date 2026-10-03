@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,6 +50,19 @@ MODELS = {
 }
 
 
+SYNONYMS = {"money": "budget", "cost": "budget", "spend": "budget", "spending": "budget", "cash": "budget",
+            "trip": "travel", "holiday": "travel", "vacation": "travel"}  # fmt: skip
+
+
+def fake_embedding(text: str, dim: int = 32) -> list[float]:
+    """Bag-of-words vector with a few synonyms folded together, so meaning-search is testable."""
+    vec = [0.0] * dim
+    for word in re.findall(r"[a-z]+", text.lower()):
+        word = SYNONYMS.get(word, word)
+        vec[zlib.crc32(word.encode()) % dim] += 1.0
+    return vec
+
+
 def _chunks(text: str, size: int = 6) -> list[str]:
     parts = re.findall(r"\S+\s*|\s+", text)
     out, buf = [], ""
@@ -68,6 +82,8 @@ class MockLLM:
         self.models = dict(MODELS if models is None else models)
         self.script: list[Reply] = []
         self.requests: list[dict[str, Any]] = []
+        self.embed_calls = 0
+        self.loaded: set[str] = {"qwen3:8b"}
         self.app = self._build()
 
     # Behaviour ------------------------------------------------------------------------------
@@ -163,6 +179,42 @@ class MockLLM:
                 yield json.dumps({"status": "success"}) + "\n"
 
             return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+        @app.post("/api/embed")
+        async def embed(request: Request):
+            payload = await request.json()
+            texts = payload["input"] if isinstance(payload["input"], list) else [payload["input"]]
+            self.embed_calls += 1
+            return {"model": payload["model"], "embeddings": [fake_embedding(t) for t in texts]}
+
+        @app.get("/api/ps")
+        async def ps():
+            return {
+                "models": [
+                    {
+                        "name": n,
+                        "size": 5_000_000_000,
+                        "size_vram": 4_800_000_000,
+                        "expires_at": "2026-10-03T18:00:00Z",
+                    }
+                    for n in self.loaded
+                ]
+            }
+
+        @app.post("/api/generate")
+        async def generate(request: Request):
+            payload = await request.json()
+            if payload.get("keep_alive") == 0:
+                self.loaded.discard(payload["model"])
+            return {"model": payload["model"], "response": "", "done": True}
+
+        @app.delete("/api/delete")
+        async def delete(request: Request):
+            name = (await request.json())["model"]
+            if name not in self.models:
+                return JSONResponse({"error": f"model '{name}' not found"}, status_code=404)
+            del self.models[name]
+            return {}
 
         @app.post("/api/chat")
         async def ollama_chat(request: Request):

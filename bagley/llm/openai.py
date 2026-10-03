@@ -162,3 +162,15 @@ class OpenAIProvider(Provider):
         if status == 401:
             return LLMError("The model server rejected the API key.", status=401)
         return LLMError(f"Model server error ({status}): {text}", status=status)
+
+    async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        try:
+            resp = await self._client.post(
+                "/embeddings", json={"model": model, "input": texts}, timeout=120.0
+            )
+        except httpx.HTTPError as exc:
+            raise self._unreachable(exc) from exc
+        if resp.status_code >= 400:
+            raise self._http_error(resp.status_code, await self._error_text(resp), model)
+        data = sorted(resp.json().get("data", []), key=lambda d: d.get("index", 0))
+        return [d["embedding"] for d in data]
