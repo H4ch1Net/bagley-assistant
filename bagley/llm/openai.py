@@ -35,6 +35,7 @@ class OpenAIProvider(Provider):
 
     def __init__(self, base_url: str, api_key: str = "", **kwargs: Any) -> None:
         super().__init__(openai_base(base_url), api_key, **kwargs)
+        self.display_url = base_url.rstrip("/")
 
     async def version(self) -> str:
         await self.list_models()

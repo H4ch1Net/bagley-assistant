@@ -104,6 +104,7 @@ class Provider(ABC):
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.display_url = self.base_url
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
@@ -149,7 +150,7 @@ class Provider(ABC):
 
     def _unreachable(self, exc: Exception) -> LLMError:
         return LLMError(
-            f"Can't reach the model server at {self.base_url}.",
+            f"Can't reach the model server at {self.display_url}.",
             hint="Start your model server (for Ollama: `ollama serve`) or change the server "
             "URL in Settings → Model.",
         )

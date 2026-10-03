@@ -58,7 +58,9 @@ async def safe_get(ctx: ToolContext, url: str, **kwargs: Any) -> httpx.Response:
 
 
 class _TextExtractor(HTMLParser):
-    SKIP = frozenset({"script", "style", "noscript", "svg", "nav", "footer", "form", "iframe", "template"})
+    SKIP = frozenset(
+        {"script", "style", "noscript", "svg", "nav", "footer", "form", "iframe", "template"}
+    )
     BLOCK = frozenset({
         "p", "div", "section", "article", "br", "li", "ul", "ol", "tr", "table", "header",
         "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "main", "aside", "dd", "dt",

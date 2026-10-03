@@ -92,6 +92,7 @@ def fit_history(history: list[dict[str, Any]], budget: int) -> list[dict[str, An
 class Agent:
     def __init__(self, runtime: Runtime) -> None:
         self.rt = runtime
+        self._background: set[asyncio.Task[None]] = set()
 
     async def run(self, req: RunRequest, emit: Emit, approve: Approve) -> None:
         rt = self.rt
@@ -235,7 +236,9 @@ class Agent:
             }
         )
         if is_new and prefs.smart_titles and model and not stopped:
-            asyncio.create_task(self._smart_title(cid, first_text, model, emit))  # noqa: RUF006
+            task = asyncio.create_task(self._smart_title(cid, first_text, model, emit))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
 
     # Context --------------------------------------------------------------------------------
 

@@ -110,12 +110,13 @@ class Store:
 
     def list_conversations(self, query: str = "", limit: int = 200) -> list[dict[str, Any]]:
         if query:
-            like = f"%{query}%"
+            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
             rows = self._all(
                 "SELECT c.id, c.title, c.created_at, c.updated_at FROM conversations c "
-                "WHERE c.deleted_at IS NULL AND (c.title LIKE ? OR EXISTS ("
+                "WHERE c.deleted_at IS NULL AND (c.title LIKE ? ESCAPE '\\' OR EXISTS ("
                 "  SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
-                "  AND m.role IN ('user', 'assistant') AND m.content LIKE ?)) "
+                "  AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\')) "
                 "ORDER BY c.updated_at DESC LIMIT ?",
                 (like, like, limit),
             )

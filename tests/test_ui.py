@@ -61,7 +61,9 @@ def test_chat_with_tool_call_and_reload(page, stack):
     wait_idle(page)
     assert page.locator('.tool-card[data-state="ok"]').count() == 1
     assert "22°C and mostly clear" in page.inner_text(".turn-assistant .prose")
-    page.wait_for_function("document.querySelector('#title-btn').textContent === 'Weekend weather in Lisbon'")
+    page.wait_for_function(
+        "document.querySelector('#title-btn').textContent === 'Weekend weather in Lisbon'"
+    )
     assert page.locator(".conv-item.active").inner_text().startswith("Weekend weather")
 
     page.reload()
@@ -153,7 +155,9 @@ def test_settings_persona_memory_and_theme(page, stack):
 
 
 def test_mobile_layout(browser, stack):
-    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+    )
     page = context.new_page()
     page.goto(stack.url)
     page.wait_for_selector(".conn .dot.ok", state="attached")

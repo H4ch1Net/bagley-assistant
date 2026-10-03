@@ -13,7 +13,7 @@ from datetime import datetime
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
@@ -207,6 +207,16 @@ class ChatSession:
 # App ------------------------------------------------------------------------------------------
 
 
+class AppStatic(StaticFiles):
+    """Static files that the browser revalidates on every load, so upgrades never mix old and
+    new modules. Revalidation is a cheap 304 thanks to ETags."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 class RenameBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
@@ -374,14 +384,16 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         if not conv:
             raise HTTPException(404, "Conversation not found.")
         body = _export_markdown(conv, rt().store.list_messages(cid))
-        safe = (
-            "".join(c if c.isalnum() or c in " -_" else "_" for c in conv["title"]).strip()
-            or "chat"
-        )
+        name = "".join(c if c.isalnum() or c in " -_" else "_" for c in conv["title"]).strip()
+        name = name[:60] or "chat"
+        ascii_name = name.encode("ascii", "ignore").decode().strip() or "chat"
         return Response(
             body,
             media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{safe[:60]}.md"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{ascii_name}.md"; '
+                f"filename*=UTF-8''{quote(name)}.md"
+            },
         )
 
     @app.get("/api/memories")
@@ -418,5 +430,5 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         await ws.accept()
         await ChatSession(ws, rt()).serve()
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", AppStatic(directory=STATIC_DIR), name="static")
     return app

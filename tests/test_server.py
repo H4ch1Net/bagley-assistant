@@ -84,8 +84,13 @@ def test_websocket_chat_and_conversation_api(client):
         == "Renamed"
     )
     export = client.get(f"/api/conversations/{cid}/export")
-    assert export.headers["content-disposition"].endswith('Renamed.md"')
+    assert 'filename="Renamed.md"' in export.headers["content-disposition"]
     assert "Used `get_weather`" in export.text
+    client.patch(f"/api/conversations/{cid}", json={"title": "Météo à Lisbonne 天气"})
+    unicode_export = client.get(f"/api/conversations/{cid}/export")
+    assert unicode_export.status_code == 200
+    assert "filename*=UTF-8''M%C3%A9t%C3%A9o" in unicode_export.headers["content-disposition"]
+    assert client.get("/api/conversations", params={"q": "Lisbon_"}).json() == []  # "_" is literal
 
     assert client.delete(f"/api/conversations/{cid}").status_code == 204
     assert client.get(f"/api/conversations/{cid}").status_code == 404

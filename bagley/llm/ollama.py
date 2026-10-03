@@ -122,14 +122,32 @@ class OllamaProvider(Provider):
         try:
             async with self._client.stream("POST", "/api/chat", json=payload) as resp:
                 if resp.status_code >= 400:
-                    raise self._http_error(resp.status_code, await self._error_text(resp), model)
-                async for line in resp.aiter_lines():
-                    if not line.strip():
-                        continue
-                    data = json.loads(line)
-                    if data.get("error"):
-                        raise self._http_error(500, str(data["error"]), model)
-                    yield self._parse_chunk(data)
+                    text = await self._error_text(resp)
+                    if "think" in payload and "think" in text.lower():
+                        retry = True  # Model rejects the reasoning switch; try again without it.
+                    else:
+                        raise self._http_error(resp.status_code, text, model)
+                else:
+                    retry = False
+                if not retry:
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        data = json.loads(line)
+                        if data.get("error"):
+                            raise self._http_error(500, str(data["error"]), model)
+                        yield self._parse_chunk(data)
+            if retry:
+                async for chunk in self.chat(
+                    messages,
+                    model=model,
+                    tools=tools,
+                    temperature=temperature,
+                    context_tokens=context_tokens,
+                    think=None,
+                    max_tokens=max_tokens,
+                ):
+                    yield chunk
         except httpx.TimeoutException as exc:
             raise LLMError(
                 "The model server stopped responding.",

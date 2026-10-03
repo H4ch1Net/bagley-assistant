@@ -103,6 +103,10 @@ class Runtime:
                 else "Load a model in your model server."
             )
             raise LLMError("No models are installed.", hint=hint)
+        # Prefer a model that can call tools; capability lookups are cached per model.
+        for model in models[:8]:
+            if (await provider.capabilities(model.name)).tools:
+                return model.name
         return models[0].name
 
     async def health(self) -> dict[str, Any]:
@@ -119,7 +123,9 @@ class Runtime:
             info["version"] = await provider.version()
             models = await provider.list_models()
             info["models"] = len(models)
-            info["model"] = prefs.model or (models[0].name if models else "")
+            info["model"] = prefs.model or (
+                await self.resolve_model(provider, prefs) if models else ""
+            )
             if info["model"]:
                 caps = await provider.capabilities(info["model"])
                 info["capabilities"] = caps.__dict__
