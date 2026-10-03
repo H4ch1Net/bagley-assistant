@@ -221,3 +221,44 @@ def test_token_auth(make_runtime):
             == 401
         )
         assert c.get("/api/health", headers={"authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_automations_api(client):
+    preview = client.get("/api/automations/preview", params={"schedule": "weekdays at 9:00"}).json()
+    assert preview["description"] == "Weekdays at 09:00"
+    bad = client.get("/api/automations/preview", params={"schedule": "whenever"})
+    assert bad.status_code == 422 and "Couldn't understand" in bad.json()["detail"]
+
+    created = client.post(
+        "/api/automations",
+        json={
+            "kind": "task",
+            "name": "Briefing",
+            "prompt": "Weather in Lisbon?",
+            "schedule": "daily at 08:00",
+        },
+    ).json()
+    assert created["schedule_text"] == "Every day at 08:00" and created["enabled"] is True
+    assert (
+        client.post(
+            "/api/automations", json={"kind": "watch", "schedule": "hourly", "target": "ftp://x"}
+        ).status_code
+        == 422
+    )
+
+    paused = client.patch(f"/api/automations/{created['id']}", json={"enabled": False}).json()
+    assert paused["enabled"] is False
+    resumed = client.patch(
+        f"/api/automations/{created['id']}", json={"enabled": True, "schedule": "every 2 hours"}
+    ).json()
+    assert resumed["schedule_text"] == "Every 2 hours"
+
+    with client.websocket_connect(WS) as ws:
+        assert client.post(f"/api/automations/{created['id']}/run").status_code == 202
+        events = []
+        while not any(e["type"] == "notification" for e in events):
+            events.append(json.loads(ws.receive_text()))
+    done = client.get("/api/automations").json()[0]
+    assert done["last_status"] == "ok" and done["conversation_id"]
+    assert client.delete(f"/api/automations/{created['id']}").status_code == 204
+    assert client.get("/api/automations").json() == []

@@ -8,22 +8,35 @@ export function announce(message) {
   requestAnimationFrame(() => (node.textContent = message));
 }
 
+/** A modal dialog makes the rest of the page inert, so toasts live inside it while it's open. */
+function placeToasts(box) {
+  const dialog = [...document.querySelectorAll("body > dialog[open]")].pop();
+  const home = dialog || document.body;
+  if (box.parentElement !== home) home.append(box);
+}
+
 /**
  * Show a toast. Options: `type` ("info" | "error"), `action` ({label, run}), `duration` in ms.
  * Returns a function that dismisses it.
  */
+let toastBox = null;
+
 export function toast(message, { type = "info", action, duration } = {}) {
-  const box = $("#toasts");
+  // Held by reference: dialogs replace their contents, which can detach the stack.
+  toastBox ||= $("#toasts");
+  const box = toastBox;
+  placeToasts(box);
   const node = el("div", { class: `toast ${type}`, role: type === "error" ? "alert" : "status" },
     icon(type === "error" ? "triangle-alert" : "circle-check"),
     el("span", { text: message }),
   );
   let timer;
+  const remove = () => node.remove();
   const close = () => {
     clearTimeout(timer);
     node.classList.add("leaving");
-    node.addEventListener("animationend", () => node.remove(), { once: true });
-    setTimeout(() => node.remove(), 400);
+    node.addEventListener("animationend", remove, { once: true });
+    setTimeout(remove, 400);
   };
   if (action) {
     node.append(el("button", { type: "button", text: action.label, onclick: () => { action.run(); close(); } }));

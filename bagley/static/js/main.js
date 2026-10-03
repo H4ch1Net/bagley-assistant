@@ -8,7 +8,7 @@ import { pullModel, RECOMMENDED_MODELS, savePrefs, Settings } from "./settings.j
 import { Sidebar } from "./sidebar.js";
 import { bus, setUi, state, STATUS_TEXT } from "./state.js";
 import { announce, closeMenus, openMenu, toast } from "./ui.js";
-import { $, copyText, el, formatBytes, formatTokens, icon, isMac, kbdLabel, timeOfDay } from "./util.js";
+import { $, copyText, el, formatBytes, formatTokens, icon, isMac, kbdLabel, relTime, timeOfDay } from "./util.js";
 import { voice } from "./voice.js";
 
 const avatars = mountAvatars();
@@ -67,6 +67,8 @@ const settings = new Settings({
     await Promise.all([loadModels(), refreshHealth()]);
   },
   onMemoriesChanged: loadMemories,
+  onAutomationsChanged: () => loadAutomations(),
+  openChat: (id) => navigate(id),
 });
 
 // Data -------------------------------------------------------------------------------------------
@@ -86,6 +88,16 @@ async function loadTools() {
 async function loadMemories() {
   state.memories = await api.get("/api/memories");
   renderStats();
+}
+
+async function loadAutomations() {
+  try {
+    state.automations = await api.get("/api/automations");
+  } catch {
+    return;
+  }
+  renderStats();
+  if (settings.dialog.open && settings.tab === "automations") settings.renderAutomationList();
 }
 
 async function loadModels() {
@@ -225,7 +237,7 @@ socket.on("notification", (ev) => {
   if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) {
     const n = new Notification(ev.title, { body: ev.body || "", icon: "/static/favicon.svg", tag: ev.conversation_id || undefined });
     n.onclick = () => {
-      focus();
+      window.focus();
       if (ev.conversation_id) navigate(ev.conversation_id);
       n.close();
     };
@@ -234,6 +246,7 @@ socket.on("notification", (ev) => {
 });
 
 socket.on("conversations.changed", () => sidebar.refresh());
+socket.on("automations.changed", () => loadAutomations());
 
 socket.on("title", (ev) => {
   sidebar.update({ id: ev.conversation_id, title: ev.title });
@@ -477,6 +490,7 @@ function renderStats() {
       used ? ctxBar : null,
     ),
     stat("wrench", "Tools", el("span", { class: "v", text: `${enabledTools} enabled` }), () => settings.open("tools")),
+    stat("calendar-clock", "Automate", el("span", { class: "v", text: automationText() }), () => settings.open("automations")),
     stat("bookmark", "Memory", el("span", { class: "v", text: `${state.memories.length} ${state.memories.length === 1 ? "fact" : "facts"}` }), () => settings.open("memory")),
     voice.canSpeak
       ? stat(state.ui.speak ? "volume-2" : "volume-x", "Voice", el("span", { class: "v", text: state.ui.speak ? "Reads replies" : "Muted" }), () => {
@@ -486,6 +500,13 @@ function renderStats() {
       : null,
   );
   renderPrivacy();
+}
+
+function automationText() {
+  const active = state.automations.filter((a) => a.enabled && a.next_run);
+  if (!active.length) return "None";
+  const next = Math.min(...active.map((a) => a.next_run));
+  return `${active.length} active · ${relTime(next)}`;
 }
 
 function isLocalServer() {
@@ -641,6 +662,7 @@ $("#sidebar-close").addEventListener("click", closeSidebar);
 $("#scrim").addEventListener("click", closeSidebar);
 $("#new-chat").addEventListener("click", newChat);
 $("#settings-btn").addEventListener("click", () => settings.open());
+$("#automations-btn").addEventListener("click", () => settings.open("automations"));
 
 // Shortcuts --------------------------------------------------------------------------------------
 
@@ -667,7 +689,6 @@ function showShortcuts() {
   );
   dialog.showModal();
 }
-$("#shortcuts-btn").addEventListener("click", showShortcuts);
 
 document.querySelectorAll("kbd[data-kbd]").forEach((k) => (k.textContent = kbdLabel(k.dataset.kbd)));
 
@@ -721,7 +742,7 @@ async function boot() {
   updateComposer();
   setStatus("idle");
   try {
-    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), sidebar.refresh()]);
+    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), sidebar.refresh()]);
     state.info = info;
   } catch (err) {
     toast(err.message, { type: "error" });

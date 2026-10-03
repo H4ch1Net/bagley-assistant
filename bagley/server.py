@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from bagley import __version__, journal
+from bagley import __version__, automations, journal
 from bagley.agent import Agent, RunRequest
 from bagley.config import (
     LOOPBACK_HOSTS,
@@ -236,6 +236,21 @@ class RenameBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class AutomationBody(BaseModel):
+    kind: str = Field(pattern="^(task|reminder|watch)$")
+    name: str = Field(default="", max_length=120)
+    prompt: str = Field(default="", max_length=4000)
+    schedule: str = Field(min_length=1, max_length=120)
+    target: str | None = Field(default=None, max_length=2000)
+
+
+class AutomationPatch(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    prompt: str | None = Field(default=None, max_length=4000)
+    schedule: str | None = Field(default=None, max_length=120)
+    enabled: bool | None = None
+
+
 class MemoryBody(BaseModel):
     content: str = Field(min_length=1, max_length=500)
 
@@ -305,7 +320,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         rt = runtime or Runtime(config)
         app.state.runtime = rt
-        await rt.start()
+        await rt.start(background=True)
         try:
             yield
         finally:
@@ -318,6 +333,8 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     def rt() -> Runtime:
         return app.state.runtime
+
+    background: set[asyncio.Task[None]] = set()
 
     index_html = (
         (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("{{version}}", __version__)
@@ -493,6 +510,57 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         else:
             raise HTTPException(409, "Too many files with that name.")
         return {"path": f"uploads/{target.name}", "size": len(body)}
+
+    @app.get("/api/automations")
+    async def list_automations() -> list[dict[str, Any]]:
+        sched = rt().scheduler
+        return [sched.describe(a) for a in rt().store.list_automations()]
+
+    @app.get("/api/automations/preview")
+    async def preview_schedule(schedule: str, kind: str = "task") -> dict[str, Any]:
+        try:
+            return automations.preview(schedule, kind)
+        except automations.ScheduleError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/automations", status_code=201)
+    async def create_automation(body: AutomationBody) -> dict[str, Any]:
+        try:
+            item = rt().scheduler.create(
+                body.kind, body.name or body.prompt[:60], body.schedule, body.prompt, body.target
+            )
+        except automations.ScheduleError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        await rt().broadcast({"type": "automations.changed"})
+        return rt().scheduler.describe(item)
+
+    @app.patch("/api/automations/{aid}")
+    async def update_automation(aid: int, body: AutomationPatch) -> dict[str, Any]:
+        try:
+            item = rt().scheduler.update(aid, **body.model_dump(exclude_none=True))
+        except automations.ScheduleError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not item:
+            raise HTTPException(404, "Automation not found.")
+        await rt().broadcast({"type": "automations.changed"})
+        return rt().scheduler.describe(item)
+
+    @app.delete("/api/automations/{aid}", status_code=204)
+    async def delete_automation(aid: int) -> Response:
+        if not rt().store.delete_automation(aid):
+            raise HTTPException(404, "Automation not found.")
+        await rt().broadcast({"type": "automations.changed"})
+        return Response(status_code=204)
+
+    @app.post("/api/automations/{aid}/run", status_code=202)
+    async def run_automation(aid: int) -> dict[str, Any]:
+        item = rt().store.get_automation(aid)
+        if not item:
+            raise HTTPException(404, "Automation not found.")
+        task = asyncio.create_task(rt().scheduler.run(item))
+        background.add(task)
+        task.add_done_callback(background.discard)
+        return {"started": True}
 
     @app.get("/api/memories")
     async def list_memories() -> list[dict[str, Any]]:

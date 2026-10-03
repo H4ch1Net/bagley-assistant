@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
+from bagley.automations import Scheduler
 from bagley.config import Preferences, ServerConfig, resolve_preferences
 from bagley.llm import LLMError, Provider, create_provider
 from bagley.mcp import McpManager
@@ -43,14 +44,19 @@ class Runtime:
         self.prompt_mode_models: set[str] = set()
         self.busy: set[str] = set()  # Conversations with a run in progress.
         self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
+        self.scheduler = Scheduler(self)
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
 
-    async def start(self) -> None:
+    async def start(self, *, background: bool = False) -> None:
+        """Connect MCP servers. ``background`` also starts automations (server mode only)."""
         await self.mcp.start()
+        if background:
+            self.scheduler.start()
 
     async def aclose(self) -> None:
+        await self.scheduler.stop()
         await self.mcp.stop()
         if self._provider:
             await self._provider.aclose()

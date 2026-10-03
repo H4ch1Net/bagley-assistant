@@ -6,6 +6,8 @@ Skipped unless Playwright and a Chromium build are available
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tests.demo_stack import DemoStack
@@ -251,3 +253,20 @@ def test_file_change_shows_diff_and_reverts(page, stack):
     assert note.read_text() == "- milk\n- eggs\n"
     page.reload()
     expect(page.locator(".tool-bar .badge")).to_have_text("Reverted")
+
+
+def test_create_and_run_a_reminder(page, stack):
+    page.click("#automations-btn")
+    page.click(".segmented >> text=Reminder")
+    page.fill("input[placeholder='e.g. Stretch']", "Stretch")
+    page.fill("#settings-panel textarea", "Stand up and stretch")
+    page.fill("input[list='schedule-presets']", "in 45 minutes")
+    expect(page.locator(".field .help").filter(has_text="Once,")).to_be_visible()
+    page.click("button:has-text('Create')")
+    row = page.locator(".list-item.automation").filter(has_text="Stretch")
+    expect(row).to_contain_text(re.compile(r"next in 4[45] min"))
+    expect(page.locator(".toast")).to_have_count(0)
+    row.locator("[aria-label='Run Stretch now']").click()
+    page.locator(".toast >> text=Open").click()
+    expect(page.locator(".turn-assistant .prose")).to_contain_text("Reminder: Stand up and stretch")
+    expect(page.locator(".stat").filter(has_text="Automate")).to_contain_text("1 active")

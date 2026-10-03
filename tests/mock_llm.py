@@ -418,6 +418,7 @@ DDG_HTML = """
 
 
 WEB_REQUESTS: list[httpx.Request] = []
+WATCHED_PAGE = {"html": "<html><body><h1>Prices</h1><p>Laptop: 999</p></body></html>"}
 
 
 def fake_web(request: httpx.Request) -> httpx.Response:
@@ -425,6 +426,8 @@ def fake_web(request: httpx.Request) -> httpx.Response:
     host = request.url.host
     if request.url.path == "/to-private":
         return httpx.Response(302, headers={"location": "http://127.0.0.1:8765/api/preferences"})
+    if request.url.path == "/watched":
+        return httpx.Response(200, text=WATCHED_PAGE["html"], headers={"content-type": "text/html"})
     if request.url.path == "/huge":
         return httpx.Response(200, content=b"x" * 3_100_000, headers={"content-type": "text/plain"})
     if host == "geocoding-api.open-meteo.com":

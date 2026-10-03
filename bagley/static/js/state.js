@@ -14,6 +14,7 @@ export const state = {
   tools: [],
   toolsInfo: null,
   memories: [],
+  automations: [],
   models: [],
   info: null,
   lastStats: null,

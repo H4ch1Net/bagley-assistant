@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { bus, setUi, state } from "./state.js";
 import { confirmDialog, toast } from "./ui.js";
-import { $, debounce, el, formatBytes, icon } from "./util.js";
+import { $, debounce, el, formatBytes, icon, relTime } from "./util.js";
 import { voice } from "./voice.js";
 
 const ENV_NAMES = {
@@ -31,6 +31,7 @@ const ACCENTS = [
 const TABS = [
   { id: "general", label: "General", icon: "sparkles" },
   { id: "model", label: "Model", icon: "cpu" },
+  { id: "automations", label: "Automations", icon: "calendar-clock" },
   { id: "tools", label: "Tools", icon: "wrench" },
   { id: "memory", label: "Memory", icon: "bookmark" },
   { id: "voice", label: "Voice", icon: "volume-2" },
@@ -90,10 +91,12 @@ function select(options, current, onChange) {
 }
 
 export class Settings {
-  constructor({ onModelsChanged, onMemoriesChanged }) {
+  constructor({ onModelsChanged, onMemoriesChanged, onAutomationsChanged, openChat }) {
     this.dialog = $("#settings-dialog");
     this.onModelsChanged = onModelsChanged;
     this.onMemoriesChanged = onMemoriesChanged;
+    this.onAutomationsChanged = onAutomationsChanged;
+    this.openChat = openChat;
     this.tab = "general";
     this.dialog.addEventListener("close", () => (this.isOpen = false));
     voice.onVoicesChanged(() => this.fillVoices?.());
@@ -314,6 +317,123 @@ export class Settings {
         }, installed.has(m.name) ? icon("check", "icon-xs") : icon("plus", "icon-xs"), m.name)),
       ),
       el("div", { class: "help", style: "margin-top:8px", text: "Browse more at ollama.com/library. Models with tool support work best." }),
+    );
+  }
+
+  // Automations -----------------------------------------------------------------------------
+
+  render_automations(panel) {
+    const kinds = [
+      ["task", "calendar-clock", "Task", "Bagley does something on a schedule and reports back."],
+      ["reminder", "alarm-clock", "Reminder", "A message at a set time. No model needed."],
+      ["watch", "eye", "Watch page", "Check a web page and tell you when it changes."],
+    ];
+    this.newKind ||= "task";
+    const kind = this.newKind;
+    const name = el("input", { class: "input", placeholder: kind === "watch" ? "e.g. Laptop price" : kind === "reminder" ? "e.g. Stretch" : "e.g. Morning briefing", maxlength: 80 });
+    const prompt = el("textarea", { class: "textarea", rows: 3, maxlength: 4000, placeholder: kind === "task"
+      ? "e.g. Give me today's weather for Porto and the top 3 tech headlines."
+      : kind === "reminder" ? "e.g. Stand up and stretch." : "Optional: what to do when it changes, e.g. tell me if the price drops below 800." });
+    const url = el("input", { class: "input mono", placeholder: "https://…", spellcheck: "false" });
+    const when = el("input", { class: "input", list: "schedule-presets", value: kind === "watch" ? "every 1 hour" : kind === "reminder" ? "in 30 minutes" : "weekdays at 08:00" });
+    const presets = el("datalist", { id: "schedule-presets" },
+      ...["in 30 minutes", "at 18:00", "every 1 hour", "every 6 hours", "daily at 08:00", "weekdays at 09:00", "weekends at 10:00", "mondays at 09:00"].map((v) => el("option", { value: v })));
+    const hint = el("div", { class: "help", "aria-live": "polite" });
+    const check = debounce(async () => {
+      try {
+        const p = await api.get(`/api/automations/preview?kind=${kind}&schedule=${encodeURIComponent(when.value)}`);
+        hint.textContent = `${p.description} · next ${relTime(p.next_run)}`;
+        hint.classList.remove("error-text");
+      } catch (err) {
+        hint.textContent = err.message;
+        hint.classList.add("error-text");
+      }
+    }, 250);
+    when.addEventListener("input", check);
+    check();
+    const create = el("button", { class: "btn btn-primary", type: "button" }, icon("plus", "icon-sm"), "Create");
+    create.addEventListener("click", async () => {
+      create.disabled = true;
+      try {
+        await api.post("/api/automations", { kind, name: name.value.trim(), prompt: prompt.value.trim(), schedule: when.value, target: kind === "watch" ? url.value.trim() : null });
+        toast(kind === "reminder" ? "Reminder set" : kind === "watch" ? "Watching the page" : "Automation created");
+        await this.onAutomationsChanged();
+        this.refresh();
+      } catch (err) {
+        toast(err.message, { type: "error" });
+        create.disabled = false;
+      }
+    });
+
+    const seg = el("div", { class: "segmented", role: "group", "aria-label": "Kind" },
+      ...kinds.map(([id, ic, label]) => el("button", { type: "button", "aria-pressed": String(kind === id), onclick: () => { this.newKind = id; this.refresh(); } }, icon(ic, "icon-sm"), label)));
+
+    panel.append(
+      el("h3", { text: "Automations" }),
+      el("p", { class: "lead" }, "Bagley can work on its own while it's running: reminders, scheduled tasks and page watchers. Results arrive as chats and notifications. You can also just ask, e.g. ", el("em", { text: "“every weekday at 8, brief me on the weather and news”" }), "."),
+      el("div", { class: "section" },
+        el("div", { class: "section-title", text: "New" }),
+        el("div", { class: "field" }, seg, el("div", { class: "help", text: kinds.find((k) => k[0] === kind)[3] })),
+        el("div", { class: "field-row" }, field("Name", name), el("div", { class: "field" }, el("label", { text: "When" }), when, hint)),
+        presets,
+        kind === "watch" ? field("Page URL", url) : null,
+        field(kind === "reminder" ? "Message" : kind === "watch" ? "When it changes (optional)" : "Instructions", prompt),
+        el("div", { class: "inline" }, create, kind === "task" ? el("span", { class: "help", text: "Unattended runs can't use tools that need approval." }) : null),
+      ),
+    );
+
+    this.automationBox = el("div", { class: "section" });
+    panel.append(this.automationBox);
+    this.renderAutomationList();
+  }
+
+  /** Redraw only the list, so background updates never wipe a half-filled form. */
+  renderAutomationList() {
+    if (!this.automationBox?.isConnected) return;
+    const items = state.automations;
+    this.automationBox.replaceChildren(
+      el("div", { class: "section-title", text: `Your automations · ${items.length}` }),
+      el("div", { class: "list" }, ...(items.length ? items.map((a) => this.automationRow(a)) : [el("div", { class: "list-empty", text: "Nothing scheduled yet." })])),
+    );
+  }
+
+  automationRow(a) {
+    const kindIcon = { task: "calendar-clock", reminder: "alarm-clock", watch: "eye" }[a.kind];
+    const next = a.running ? "running now…" : !a.enabled ? (a.next_run ? "paused" : "done") : `next ${relTime(a.next_run)}`;
+    const last = a.last_run ? `${a.last_status === "error" ? "Failed" : "Last run"} ${relTime(a.last_run)}${a.last_result ? `: ${a.last_result}` : ""}` : "Hasn't run yet";
+    const toggle = el("input", { type: "checkbox", role: "switch", checked: a.enabled, "aria-label": `Enable ${a.name}`, disabled: !a.enabled && !a.next_run && a.schedule.startsWith("at ") });
+    toggle.addEventListener("change", async () => {
+      try {
+        await api.patch(`/api/automations/${a.id}`, { enabled: toggle.checked });
+        await this.onAutomationsChanged();
+      } catch (err) {
+        toggle.checked = !toggle.checked;
+        toast(err.message, { type: "error" });
+      }
+    });
+    const run = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Run now", "aria-label": `Run ${a.name} now`, disabled: a.running }, icon("play", "icon-sm"));
+    run.addEventListener("click", async () => {
+      run.disabled = true;
+      await api.post(`/api/automations/${a.id}/run`).catch((err) => toast(err.message, { type: "error" }));
+    });
+    const remove = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Delete", "aria-label": `Delete ${a.name}` }, icon("trash-2", "icon-sm"));
+    remove.addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: `Delete “${a.name}”?`, message: "It won't run again. Its chat stays in your history.", confirm: "Delete", danger: true }))) return;
+      await api.del(`/api/automations/${a.id}`).catch((err) => toast(err.message, { type: "error" }));
+      await this.onAutomationsChanged();
+    });
+    const openChat = a.conversation_id
+      ? el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Open chat", "aria-label": `Open chat for ${a.name}`, onclick: () => { this.dialog.close(); this.openChat(a.conversation_id); } }, icon("message-square", "icon-sm"))
+      : null;
+    return el("div", { class: `list-item automation${a.enabled ? "" : " off"}`, dataset: { id: a.id } },
+      el("span", { class: "tool-icon" }, a.running ? el("span", { class: "spinner" }) : icon(kindIcon, "icon-sm")),
+      el("div", { class: "grow" },
+        el("div", { class: "name" }, el("span", { class: "auto-name", text: a.name }), el("span", { class: "badge", text: a.schedule_text }), el("span", { class: "subtle", style: "font-weight:400", text: next })),
+        a.target ? el("div", { class: "desc mono", text: a.target }) : null,
+        el("div", { class: `desc${a.last_status === "error" ? " error-text" : ""}`, text: last }),
+      ),
+      el("div", { class: "inline", style: "gap:2px" }, run, openChat, remove),
+      el("label", { class: "switch" }, toggle, el("span")),
     );
   }
 

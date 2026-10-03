@@ -152,3 +152,22 @@ export class Emitter {
 
 export const prefersReducedMotion = () =>
   document.documentElement.classList.contains("reduce-motion") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** "in 5 min", "in 3 h", "tomorrow 08:00", "2 h ago", or a date for anything further away. */
+export function relTime(seconds) {
+  if (!seconds) return "";
+  const diff = seconds * 1000 - Date.now();
+  const abs = Math.abs(diff);
+  const d = new Date(seconds * 1000);
+  const clock = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (abs < 45_000) return diff > 0 ? "in a moment" : "just now";
+  const mins = Math.round(abs / 60_000);
+  const hours = Math.round(abs / 3_600_000);
+  if (mins < 60) return diff > 0 ? `in ${mins} min` : `${mins} min ago`;
+  if (hours < 12) return diff > 0 ? `in ${hours} h` : `${hours} h ago`;
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (d.toDateString() === today.toDateString()) return `today ${clock}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${clock}`;
+  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) + ` ${clock}`;
+}
