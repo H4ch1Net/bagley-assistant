@@ -353,3 +353,23 @@ def test_telegram_setup_and_pairing(page, stack):
     assert page.locator(".pair-code").inner_text() != code
     page.click("button[aria-label='Unpair Rui']")
     expect(page.locator(".telegram-chat")).to_have_count(0)
+
+
+def test_stopping_removes_an_open_question(browser, stack):
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    page.goto(stack.url)
+    page.wait_for_selector(".conn .dot.ok")
+    long = "An option long enough to wrap onto several lines on a phone screen, " * 1
+    stack.mock.script = [
+        Reply(tool_calls=[("ask_user", {"question": "Pick one?", "options": [long.strip(), "B"]})])
+    ]
+    send(page, "ask me")
+    page.wait_for_selector(".question")
+    answer = page.locator(".question-form button[type=submit]")
+    box = answer.bounding_box()
+    assert box and box["x"] + box["width"] <= 390  # Reachable on a phone.
+    page.keyboard.press("Escape")
+    wait_idle(page)
+    expect(page.locator(".question")).to_have_count(0)
+    context.close()

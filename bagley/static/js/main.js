@@ -226,6 +226,7 @@ function newChat() {
 
 socket.on("open", () => {
   state.connected = true;
+  state.telegram = null; // The server may have restarted; its next status starts a new count.
   refreshHealth();
   updateComposer();
 });
@@ -276,7 +277,7 @@ socket.on("skills.changed", () => loadSkills());
 socket.on("telegram.changed", (ev) => settings.applyTelegram(ev.status));
 socket.on("memories.changed", async () => {
   await loadMemories();
-  if (settings.dialog.open && settings.tab === "memory") settings.refresh();
+  settings.renderMemoryList();
 });
 socket.on("knowledge.changed", (ev) => {
   state.knowledge = ev.status;

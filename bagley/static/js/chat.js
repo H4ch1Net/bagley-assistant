@@ -586,6 +586,7 @@ export class Chat {
     const reply = (text) => {
       if (!text.trim()) return input.focus();
       this.socket.send({ type: "answer", id: ev.id, answer: text.trim() });
+      if (box.contains(document.activeElement)) $("#composer-input").focus({ preventScroll: true });
       box.querySelectorAll("button, input").forEach((n) => (n.disabled = true));
     };
     const form = el("form", { class: "inline question-form" }, input, el("button", { class: "btn btn-sm btn-primary", type: "submit" }, icon("send", "icon-sm"), "Answer"));
@@ -664,6 +665,7 @@ export class Chat {
       for (const card of live.cards.values()) {
         if (["running", "approval"].includes(card.card.dataset.state)) {
           card.approval?.remove();
+          card.question?.remove();
           card.set("cancelled");
         }
       }

@@ -612,6 +612,8 @@ export class Settings {
     save.addEventListener("click", async () => {
       const key = name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       if (!key) return name.focus();
+      if (!description.value.trim()) return description.focus();
+      if (!instructions.value.trim()) return instructions.focus();
       save.disabled = true;
       try {
         await api.put(`/api/skills/${encodeURIComponent(key)}`, { description: description.value.trim(), instructions: instructions.value });
@@ -643,6 +645,7 @@ export class Settings {
     );
     this.renderTelegram();
     api.get("/api/telegram").then((status) => {
+      state.telegram = null; // A fresh read wins, even if the server restarted its counter.
       this.applyTelegram(status);
     }).catch(() => {});
   }
@@ -664,8 +667,10 @@ export class Settings {
         if (done) toast(done);
       } catch (err) {
         toast(err.message, { type: "error" });
+        return false; // Leave the form as it is, so a rejected token can be corrected.
       }
       this.renderTelegram();
+      return true;
     };
     if (!t.configured) {
       const token = el("input", { class: "input mono", type: "password", autocomplete: "off", spellcheck: "false", placeholder: "123456789:AA…", "aria-label": "Bot token" });
@@ -695,10 +700,16 @@ export class Settings {
       sections.push(el("div", { class: "section" },
         el("div", { class: "section-title", text: "Pair your phone" }),
         el("p", { class: "help", style: "margin:0 0 10px" }, "Open the link on your phone, or send ", el("code", { class: "mono", text: `/pair ${code}` }), ` to @${t.bot}. Each code pairs one chat and expires after 15 minutes.`),
-        el("div", { class: "inline" },
+        el("div", { class: "inline pair-row" },
           el("a", { class: "btn btn-primary btn-sm", href: link, target: "_blank", rel: "noopener" }, icon("external-link", "icon-sm"), "Open in Telegram"),
           el("span", { class: "pair-code mono", text: code }),
-          el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "New code", onclick: async () => this.applyTelegram(await api.post("/api/telegram/code")) }),
+          el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "New code", onclick: async () => {
+            try {
+              this.applyTelegram(await api.post("/api/telegram/code"));
+            } catch (err) {
+              toast(err.message, { type: "error" });
+            }
+          } }),
         ),
       ));
     }
@@ -926,6 +937,18 @@ export class Settings {
       }
     };
     input.addEventListener("keydown", (e) => e.key === "Enter" && add());
+    this.memoryBox = el("div", { class: "section" });
+    panel.append(
+      el("h3", { text: "Memory" }),
+      el("p", { class: "lead", text: "Facts Bagley keeps between conversations. It saves them when you share something lasting, or when you ask it to remember. Everything here goes into each conversation's context." }),
+      el("div", { class: "section" }, el("div", { class: "inline" }, input, el("button", { class: "btn", type: "button", onclick: add }, icon("plus", "icon-sm"), "Add"))),
+      this.memoryBox,
+    );
+    this.renderMemoryList();
+  }
+
+  renderMemoryList() {
+    if (!this.memoryBox?.isConnected) return;
     const items = state.memories.map((m) => el("div", { class: "list-item" },
       el("span", { class: "subtle mono", style: "font-size:12px;margin-top:2px", text: `#${m.id}` }),
       el("div", { class: "grow", text: m.content }),
@@ -950,15 +973,10 @@ export class Settings {
         this.refresh();
       },
     }, "Forget all");
-    panel.append(
-      el("h3", { text: "Memory" }),
-      el("p", { class: "lead", text: "Facts Bagley keeps between conversations. It saves them when you share something lasting, or when you ask it to remember. Everything here goes into each conversation's context." }),
-      el("div", { class: "section" }, el("div", { class: "inline" }, input, el("button", { class: "btn", type: "button", onclick: add }, icon("plus", "icon-sm"), "Add"))),
-      el("div", { class: "section" },
-        el("div", { class: "list" }, ...(items.length ? items : [el("div", { class: "list-empty", text: "Nothing remembered yet. Try “Remember that I prefer metric units.”" })])),
-        state.memories.length ? el("div", { style: "margin-top:12px" }, clear) : null,
-      ),
-    );
+    keepFocus(this.memoryBox, () => this.memoryBox.replaceChildren(
+      el("div", { class: "list" }, ...(items.length ? items : [el("div", { class: "list-empty", text: "Nothing remembered yet. Try “Remember that I prefer metric units.”" })])),
+      state.memories.length ? el("div", { style: "margin-top:12px" }, clear) : null,
+    ));
   }
 
   // Voice -----------------------------------------------------------------------------------
