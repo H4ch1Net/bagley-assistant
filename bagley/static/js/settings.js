@@ -33,6 +33,7 @@ const TABS = [
   { id: "model", label: "Model", icon: "cpu" },
   { id: "automations", label: "Automations", icon: "calendar-clock" },
   { id: "skills", label: "Skills", icon: "graduation-cap" },
+  { id: "telegram", label: "Telegram", icon: "send" },
   { id: "tools", label: "Tools", icon: "wrench" },
   { id: "knowledge", label: "Knowledge", icon: "library" },
   { id: "memory", label: "Memory", icon: "bookmark" },
@@ -629,6 +630,95 @@ export class Settings {
       el("div", { class: "inline" }, save, el("button", { class: "btn btn-sm", type: "button", text: "Cancel", onclick: close })),
     ));
     (sk ? instructions : name).focus();
+  }
+
+  // Telegram --------------------------------------------------------------------------------
+
+  render_telegram(panel) {
+    this.telegramBox = el("div");
+    panel.append(
+      el("h3", { text: "Telegram" }),
+      el("p", { class: "lead", text: "Talk to Bagley from your phone. Approvals and questions arrive as buttons, charts as photos, and automation results and reminders as messages. Bagley only connects out to Telegram, so nothing on your network is opened up." }),
+      this.telegramBox,
+    );
+    this.renderTelegram();
+    api.get("/api/telegram").then((status) => {
+      this.applyTelegram(status);
+    }).catch(() => {});
+  }
+
+  /** Keep the newest status: a broadcast can overtake the reply to the request that caused it. */
+  applyTelegram(status, render = true) {
+    if (!state.telegram || status.version >= state.telegram.version) state.telegram = status;
+    if (render) this.renderTelegram();
+  }
+
+  renderTelegram() {
+    const box = this.telegramBox;
+    if (!box?.isConnected) return;
+    const t = state.telegram;
+    if (!t) return box.replaceChildren(el("div", { class: "status-line" }, el("span", { class: "spinner" }), "Checking…"));
+    const put = async (body, done) => {
+      try {
+        this.applyTelegram(await api.put("/api/telegram", body), false);
+        if (done) toast(done);
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
+      this.renderTelegram();
+    };
+    if (!t.configured) {
+      const token = el("input", { class: "input mono", type: "password", autocomplete: "off", spellcheck: "false", placeholder: "123456789:AA…", "aria-label": "Bot token" });
+      const connect = el("button", { class: "btn btn-primary", type: "button" }, icon("send", "icon-sm"), "Connect");
+      const go = () => (token.value.trim() ? put({ token: token.value.trim() }) : token.focus());
+      connect.addEventListener("click", go);
+      token.addEventListener("keydown", (e) => e.key === "Enter" && go());
+      return box.replaceChildren(el("div", { class: "section" },
+        el("div", { class: "section-title", text: "1. Create a bot" }),
+        el("p", { class: "help", style: "margin:0 0 10px" }, "In Telegram, message ", el("b", { text: "@BotFather" }), ", send ", el("code", { text: "/newbot" }), ", pick a name, and paste the token it gives you."),
+        el("div", { class: "inline" }, token, connect),
+        t.locked ? el("div", { class: "help", text: "Set by BAGLEY_TELEGRAM_TOKEN." }) : null,
+      ));
+    }
+    const dot = { ok: "ok", error: "bad", connecting: "", off: "" }[t.state];
+    const statusText = t.state === "ok" ? `Connected as @${t.bot}` : t.state === "error" ? t.error : "Connecting…";
+    const sections = [el("div", { class: "section" },
+      el("div", { class: "kb-status" },
+        t.state === "connecting" ? el("span", { class: "spinner" }) : el("span", { class: `dot ${dot}` }),
+        el("span", { class: "grow", text: statusText }),
+        t.locked ? null : el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "Disconnect", onclick: () => put({ token: "" }, "Telegram disconnected") }),
+      ),
+    )];
+    if (t.state === "ok") {
+      const code = t.code;
+      const link = `https://t.me/${t.bot}?start=${code.replace("-", "")}`;
+      sections.push(el("div", { class: "section" },
+        el("div", { class: "section-title", text: "2. Pair your phone" }),
+        el("p", { class: "help", style: "margin:0 0 10px" }, "Open the link on your phone, or send ", el("code", { class: "mono", text: `/pair ${code}` }), ` to @${t.bot}. Each code pairs one chat and expires after 15 minutes.`),
+        el("div", { class: "inline" },
+          el("a", { class: "btn btn-primary btn-sm", href: link, target: "_blank", rel: "noopener" }, icon("external-link", "icon-sm"), "Open in Telegram"),
+          el("span", { class: "pair-code mono", text: code }),
+          el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "New code", onclick: async () => this.applyTelegram(await api.post("/api/telegram/code")) }),
+        ),
+      ));
+    }
+    sections.push(el("div", { class: "section" },
+      el("div", { class: "section-title", text: `Paired chats · ${t.chats.length}` }),
+      el("div", { class: "list" }, ...(t.chats.length ? t.chats.map((c) => el("div", { class: "list-item telegram-chat" },
+        el("span", { class: "tool-icon" }, icon("send", "icon-sm")),
+        el("div", { class: "grow" }, el("div", { class: "name", text: c.name }), el("div", { class: "desc mono", text: `chat ${c.id}` })),
+        el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "Unpair", "aria-label": `Unpair ${c.name}`, onclick: async () => {
+          try {
+            this.applyTelegram(await api.del(`/api/telegram/chats/${c.id}`), false);
+          } catch (err) {
+            toast(err.message, { type: "error" });
+          }
+          this.renderTelegram();
+        } }),
+      )) : [el("div", { class: "list-empty", text: "No phone paired yet." })])),
+      toggleRow("Send automation results here", "Reminders, scheduled task results and page changes also go to your paired chats.", t.notify, (v) => put({ notify: v })),
+    ));
+    keepFocus(box, () => box.replaceChildren(...sections));
   }
 
   // Knowledge -------------------------------------------------------------------------------

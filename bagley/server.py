@@ -290,6 +290,11 @@ class SkillBody(BaseModel):
     instructions: str = Field(min_length=1, max_length=12_000)
 
 
+class TelegramBody(BaseModel):
+    token: str | None = Field(default=None, max_length=200)
+    notify: bool | None = None
+
+
 class PullBody(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
@@ -724,6 +729,40 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
             raise HTTPException(400, "Built-in skills can't be deleted.")
         await rt().broadcast({"type": "skills.changed"})
         return Response(status_code=204)
+
+    @app.get("/api/telegram")
+    async def telegram_status() -> dict[str, Any]:
+        return rt().telegram.status()
+
+    @app.put("/api/telegram")
+    async def telegram_setup(body: TelegramBody) -> dict[str, Any]:
+        runtime = rt()
+        if body.notify is not None:
+            runtime.update_preferences({"telegram_notify": body.notify})
+        if body.token is not None:
+            token = body.token.strip()
+            if token and not re.fullmatch(r"\d{5,}:[\w-]{30,}", token):
+                raise HTTPException(400, "That doesn't look like a bot token from @BotFather.")
+            if "telegram_token" in runtime.preferences()[1]:
+                raise HTTPException(400, "The token is set by BAGLEY_TELEGRAM_TOKEN.")
+            runtime.update_preferences({"telegram_token": token})
+            await runtime.telegram.restart()
+        else:
+            await runtime.telegram.changed()
+        return runtime.telegram.status()
+
+    @app.post("/api/telegram/code")
+    async def telegram_code() -> dict[str, Any]:
+        rt().telegram.new_code()
+        await rt().telegram.changed()
+        return rt().telegram.status()
+
+    @app.delete("/api/telegram/chats/{chat_id}")
+    async def telegram_unpair(chat_id: int) -> dict[str, Any]:
+        if not rt().telegram.unpair(chat_id):
+            raise HTTPException(404, "That chat isn't paired.")
+        await rt().telegram.changed()
+        return rt().telegram.status()
 
     @app.get("/api/memories")
     async def list_memories() -> list[dict[str, Any]]:

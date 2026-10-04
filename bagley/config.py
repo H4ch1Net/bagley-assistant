@@ -145,6 +145,9 @@ class Preferences(BaseModel):
     knowledge_folders: list[str] = Field(default_factory=list)
     embedding_model: str = ""  # "" picks an installed embedding model, "off" disables.
     learning: bool = True  # Save skills and facts after complex tasks.
+    telegram_token: str = ""
+    telegram_chats: list[dict[str, Any]] = Field(default_factory=list)  # Paired chats.
+    telegram_notify: bool = True  # Forward automation results and reminders.
 
 
 PREFERENCE_ENV: dict[str, str] = {
@@ -158,10 +161,11 @@ PREFERENCE_ENV: dict[str, str] = {
     "tool_mode": "BAGLEY_TOOL_MODE",
     "think": "BAGLEY_THINK",
     "persona": "BAGLEY_PERSONA",
+    "telegram_token": "BAGLEY_TELEGRAM_TOKEN",
 }
 
 # Preferences that the browser can read but never see in full.
-SECRET_PREFERENCES = {"api_key"}
+SECRET_PREFERENCES = {"api_key", "telegram_token"}
 
 
 def env_preferences(env: Mapping[str, str] | None = None) -> dict[str, Any]:

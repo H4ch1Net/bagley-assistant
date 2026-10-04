@@ -273,6 +273,7 @@ socket.on("notification", (ev) => {
 socket.on("conversations.changed", () => sidebar.refresh());
 socket.on("automations.changed", () => loadAutomations());
 socket.on("skills.changed", () => loadSkills());
+socket.on("telegram.changed", (ev) => settings.applyTelegram(ev.status));
 socket.on("memories.changed", async () => {
   await loadMemories();
   if (settings.dialog.open && settings.tab === "memory") settings.refresh();

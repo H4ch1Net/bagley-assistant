@@ -19,6 +19,7 @@ from bagley.llm import LLMError, Provider, create_provider
 from bagley.mcp import McpManager
 from bagley.skills import SkillStore
 from bagley.store import Store
+from bagley.telegram import TelegramGateway
 from bagley.tools import ToolContext, build_registry
 
 log = logging.getLogger("bagley")
@@ -34,6 +35,7 @@ class Runtime:
         env: Mapping[str, str] | None = None,
         llm_transport: httpx.AsyncBaseTransport | None = None,
         tool_transport: httpx.AsyncBaseTransport | None = None,
+        telegram_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         config.ensure_dirs()
         self.config = config
@@ -49,6 +51,7 @@ class Runtime:
         self.scheduler = Scheduler(self)
         self.knowledge = KnowledgeBase(self)
         self.skills = SkillStore(config.data_dir / "skills")
+        self.telegram = TelegramGateway(self, transport=telegram_transport)
         self._tasks: set[asyncio.Task[Any]] = set()  # Background work such as learning.
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
@@ -60,6 +63,7 @@ class Runtime:
         if background:
             self.scheduler.start()
             self.knowledge.start()
+            self.telegram.start()
 
     def spawn(self, coro: Awaitable[Any]) -> asyncio.Task[Any]:
         """Run background work that outlives the request; cancelled on shutdown."""
@@ -72,6 +76,7 @@ class Runtime:
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self.telegram.aclose()
         await self.scheduler.stop()
         await self.knowledge.stop()
         self.knowledge.close()
@@ -194,6 +199,7 @@ class Runtime:
         )
         if conversation_id and not delivered:
             self.store.set_unread(conversation_id, True)
+        await self.telegram.notify(title, body, conversation_id)
         return delivered
 
     def tool_context(self, conversation_id: str | None = None) -> ToolContext:

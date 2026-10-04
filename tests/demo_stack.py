@@ -13,6 +13,7 @@ import uvicorn
 from bagley.config import ServerConfig
 from bagley.runtime import Runtime
 from bagley.server import create_app
+from tests.fake_telegram import FakeTelegram
 from tests.mock_llm import MockLLM, fake_web_transport
 
 
@@ -38,6 +39,7 @@ class DemoStack:
         self, data_dir: Path, *, delay: float = 0.01, app_port: int = 0, llm_port: int = 0
     ) -> None:
         self.mock = MockLLM(delay=delay)
+        self.telegram = FakeTelegram()
         self.llm_port = llm_port or free_port()
         self.app_port = app_port or free_port()
         self.servers = [serve_in_thread(self.mock.app, self.llm_port)]
@@ -45,6 +47,7 @@ class DemoStack:
             ServerConfig(data_dir=data_dir, port=self.app_port),
             env={},
             tool_transport=fake_web_transport(),
+            telegram_transport=httpx.ASGITransport(app=self.telegram.app),
         )
         self.runtime.store.set_preferences(
             {

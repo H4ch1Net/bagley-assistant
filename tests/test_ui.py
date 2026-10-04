@@ -335,3 +335,21 @@ def test_plan_and_question_cards(page, stack):
     assert "The user answered: Date" in sent
     page.reload()
     expect(page.locator(".plan:visible")).to_have_count(1)
+
+
+def test_telegram_setup_and_pairing(page, stack):
+    from tests.fake_telegram import GOOD_TOKEN
+
+    page.keyboard.press("Control+,")
+    page.click("#tab-telegram")
+    page.fill("input[aria-label='Bot token']", GOOD_TOKEN)
+    page.click("button:has-text('Connect')")
+    expect(page.locator("#settings-panel")).to_contain_text("Connected as @bagley_test_bot")
+    code = page.locator(".pair-code").inner_text()
+    link = page.locator("a:has-text('Open in Telegram')").get_attribute("href")
+    assert link == f"https://t.me/bagley_test_bot?start={code.replace('-', '')}"
+    stack.telegram.say(77, f"/start {code.replace('-', '')}", name="Rui")
+    expect(page.locator(".telegram-chat")).to_contain_text("Rui")
+    assert page.locator(".pair-code").inner_text() != code
+    page.click("button[aria-label='Unpair Rui']")
+    expect(page.locator(".telegram-chat")).to_have_count(0)

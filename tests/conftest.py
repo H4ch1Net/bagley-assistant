@@ -9,6 +9,7 @@ import pytest
 
 from bagley.config import ServerConfig
 from bagley.runtime import Runtime
+from tests.fake_telegram import FakeTelegram
 from tests.mock_llm import MockLLM, fake_web_transport
 
 
@@ -28,7 +29,12 @@ def config(tmp_path: Path) -> ServerConfig:
 
 
 @pytest.fixture
-def make_runtime(config: ServerConfig, mock: MockLLM):
+def telegram() -> FakeTelegram:
+    return FakeTelegram()
+
+
+@pytest.fixture
+def make_runtime(config: ServerConfig, mock: MockLLM, telegram: FakeTelegram):
     created: list[Runtime] = []
 
     def factory(env: dict[str, str] | None = None, **prefs: Any) -> Runtime:
@@ -37,6 +43,7 @@ def make_runtime(config: ServerConfig, mock: MockLLM):
             env=env or {},
             llm_transport=httpx.ASGITransport(app=mock.app),
             tool_transport=fake_web_transport(),
+            telegram_transport=httpx.ASGITransport(app=telegram.app),
         )
         rt.store.set_preferences(
             {
