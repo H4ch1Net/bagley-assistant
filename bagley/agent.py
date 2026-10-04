@@ -39,6 +39,7 @@ class RunRequest:
     policy: UnattendedPolicy | None = None  # Set for runs nobody is watching.
     learn: bool = True  # Reflect afterwards and save skills (the learning loop).
     ask: Ask | None = None  # How ask_user reaches the person; None when nobody can answer.
+    exclude: frozenset[str] = frozenset()  # Tools this run doesn't get (e.g. subtasks).
 
 
 @dataclass
@@ -245,7 +246,7 @@ class Agent:
             model = await rt.resolve_model(provider, prefs)
             caps = await provider.capabilities(model)
             tools = (
-                rt.registry.enabled(prefs.disabled_tools)
+                [t for t in rt.registry.enabled(prefs.disabled_tools) if t.name not in req.exclude]
                 if prefs.tool_mode != "off" and req.tools
                 else []
             )
@@ -477,7 +478,7 @@ class Agent:
     ) -> None:
         policy = req.policy if req else None
         tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
-        if tool and tool.name in disabled:
+        if tool and (tool.name in disabled or (req and tool.name in req.exclude)):
             tool = None
         await emit(
             {

@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -105,6 +105,8 @@ class Store:
                 self._db.execute(
                     "ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0"
                 )
+            if "parent_id" not in columns:  # Schema 3: subtask chats belong to a parent chat.
+                self._db.execute("ALTER TABLE conversations ADD COLUMN parent_id TEXT")
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._db.commit()
         self.purge_trash()
@@ -129,18 +131,29 @@ class Store:
 
     # Conversations ------------------------------------------------------------------------
 
-    def create_conversation(self, title: str = "New chat") -> dict[str, Any]:
+    def create_conversation(
+        self, title: str = "New chat", *, parent_id: str | None = None
+    ) -> dict[str, Any]:
+        """``parent_id`` marks a subtask chat: kept out of the sidebar and searches."""
         cid = uuid.uuid4().hex[:12]
         now = _now()
         self._exec(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (cid, title, now, now),
+            "INSERT INTO conversations (id, title, created_at, updated_at, parent_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (cid, title, now, now, parent_id),
         )
-        return {"id": cid, "title": title, "created_at": now, "updated_at": now, "unread": 0}
+        return {
+            "id": cid,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "unread": 0,
+            "parent_id": parent_id,
+        }
 
     def get_conversation(self, cid: str) -> dict[str, Any] | None:
         row = self._one(
-            "SELECT id, title, created_at, updated_at, unread FROM conversations "
+            "SELECT id, title, created_at, updated_at, unread, parent_id FROM conversations "
             "WHERE id = ? AND deleted_at IS NULL",
             (cid,),
         )
@@ -152,7 +165,8 @@ class Store:
             like = f"%{escaped}%"
             rows = self._all(
                 "SELECT c.id, c.title, c.created_at, c.updated_at, c.unread FROM conversations c "
-                "WHERE c.deleted_at IS NULL AND (c.title LIKE ? ESCAPE '\\' OR EXISTS ("
+                "WHERE c.deleted_at IS NULL AND c.parent_id IS NULL "
+                "AND (c.title LIKE ? ESCAPE '\\' OR EXISTS ("
                 "  SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
                 "  AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\')) "
                 "ORDER BY c.updated_at DESC LIMIT ?",
@@ -161,7 +175,7 @@ class Store:
         else:
             rows = self._all(
                 "SELECT id, title, created_at, updated_at, unread FROM conversations "
-                "WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?",
+                "WHERE deleted_at IS NULL AND parent_id IS NULL ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             )
         return [dict(r) for r in rows]
@@ -181,7 +195,8 @@ class Store:
         rows = self._all(
             "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at, c.title "
             "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
-            "WHERE c.deleted_at IS NULL AND m.role IN ('user', 'assistant') "
+            "WHERE c.deleted_at IS NULL AND c.parent_id IS NULL "
+            "AND m.role IN ('user', 'assistant') "
             f"AND c.id != ? AND ({where}) ORDER BY m.id DESC LIMIT 300",
             (exclude or "", *likes),
         )

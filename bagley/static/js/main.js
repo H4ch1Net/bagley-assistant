@@ -183,6 +183,11 @@ async function route() {
     state.activeId = id;
     sidebar.update({ id, unread: 0 });
     chat.render(data.messages);
+    if (data.conversation.parent_id) {
+      $("#messages").prepend(el("div", { class: "notice subtask-note" }, icon("workflow", "icon-sm"),
+        el("span", { text: "A subtask Bagley handed to a helper. " }),
+        el("a", { href: `#/c/${data.conversation.parent_id}`, text: "Back to the main chat" })));
+    }
     setTitle(data.conversation.title);
     const last = [...data.messages].reverse().find((m) => m.role === "assistant" && m.meta?.model);
     state.lastStats = last ? { tokens_per_second: last.meta.tokens_per_second, prompt_tokens: last.meta.prompt_tokens } : null;

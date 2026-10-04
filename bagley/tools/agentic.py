@@ -115,3 +115,43 @@ def search_chats(
             }
         )
     return {"results": results}
+
+
+@tool(category="agent", summary="Delegate: {tasks}", timeout=1800)
+async def delegate_task(
+    ctx: ToolContext,
+    tasks: Annotated[
+        list[str],
+        "One to five self-contained subtasks. Each must include every detail it needs, "
+        "because the helper sees nothing of this conversation",
+    ],
+    context: Annotated[str, "Background that every subtask needs (optional)"] = "",
+) -> ToolOutput:
+    """Hand subtasks to helper agents that each start with a fresh, empty context and their own
+    tools, and get only their final answers back. Use it for research across several sources or
+    items, or any long reading that would crowd this conversation. Helpers can't ask the user
+    anything or use tools that need approval."""
+    from bagley.delegation import MAX_SUBTASKS, run_subtasks
+
+    if ctx.runtime is None:
+        raise ToolError("Delegation is not available here.")
+    todo = [t.strip() for t in tasks if str(t).strip()]
+    if not todo:
+        raise ToolError("Give at least one subtask.")
+    if len(todo) > MAX_SUBTASKS:
+        raise ToolError(f"At most {MAX_SUBTASKS} subtasks at a time.")
+    results = await run_subtasks(ctx.runtime, ctx.conversation_id, todo, context)
+    return ToolOutput(
+        {"results": [{"task": r["task"], "answer": r["answer"]} for r in results]},
+        ui={
+            "subtasks": [
+                {
+                    "task": r["task"],
+                    "conversation_id": r["conversation_id"],
+                    "ok": r["ok"],
+                    "tool_calls": r["tool_calls"],
+                }
+                for r in results
+            ]
+        },
+    )

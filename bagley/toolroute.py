@@ -30,6 +30,12 @@ GROUPS: dict[str, tuple[str, str]] = {
         "save, improve or delete your saved skills (reusable procedures)",
         r"\b(skill|procedure|playbook|routine|next time|remember how|from now on)",
     ),
+    "delegate": (
+        "hand self-contained subtasks to helper agents with a fresh context, for research "
+        "across several sources or long reading",
+        r"\b(research|compare|comparison|several|each of|in parallel|delegate|investigate|"
+        r"look into|sources|summari[sz]e (all|each|these))",
+    ),
     "code": (
         "run Python code and shell commands, e.g. to analyse data or make charts",
         r"\b(run|python|code|script|execut|command|terminal|shell|plot|chart|graph|csv|excel|analy[sz]|install|pip|git)",
@@ -48,6 +54,8 @@ def group_of(tool: Tool) -> str:
         return "automation"
     if tool.category == "skills" and tool.name != "read_skill":
         return "skills"
+    if tool.name == "delegate_task":
+        return "delegate"
     if tool.category == "files" and (tool.risk == "confirm" or tool.name == "make_directory"):
         return "files"
     if tool.category == "system":

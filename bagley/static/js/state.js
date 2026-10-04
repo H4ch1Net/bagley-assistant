@@ -85,6 +85,7 @@ const TOOL_ICONS = {
   update_plan: "list-checks",
   ask_user: "message-circle-question",
   search_chats: "history",
+  delegate_task: "workflow",
   read_skill: "graduation-cap",
   save_skill: "graduation-cap",
   delete_skill: "trash-2",

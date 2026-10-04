@@ -129,6 +129,13 @@ function toolExtras(card, detail, ui) {
     card.insertBefore(el("ol", { class: "plan", "aria-label": "Plan" }, ...ui.plan.map((step) =>
       el("li", { class: `plan-step ${step.status}` }, icon(glyph[step.status] || "circle", "icon-sm"), el("span", { text: step.text })))), detail);
   }
+  if (ui.subtasks?.length) {
+    card.insertBefore(el("ul", { class: "subtasks", "aria-label": "Subtasks" }, ...ui.subtasks.map((t) =>
+      el("li", { class: t.ok ? "ok" : "failed" },
+        icon(t.ok ? "circle-check" : "circle-x", "icon-sm"),
+        el("span", { class: "grow", text: t.task }),
+        el("a", { href: `#/c/${t.conversation_id}`, title: "See how the helper worked it out", text: `${t.tool_calls} tool call${t.tool_calls === 1 ? "" : "s"}` })))), detail);
+  }
   if (ui.images?.length) {
     const media = el("div", { class: "tool-media" }, ...ui.images.map((img) =>
       el("a", { href: img.url, target: "_blank", rel: "noopener", title: img.path }, el("img", { src: img.url, alt: img.path, loading: "lazy" })),
