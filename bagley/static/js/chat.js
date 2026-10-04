@@ -134,7 +134,7 @@ function toolExtras(card, detail, ui) {
       el("li", { class: t.ok ? "ok" : "failed" },
         icon(t.ok ? "circle-check" : "circle-x", "icon-sm"),
         el("span", { class: "grow", text: t.task }),
-        el("a", { href: `#/c/${t.conversation_id}`, title: "See how the helper worked it out", text: `${t.tool_calls} tool call${t.tool_calls === 1 ? "" : "s"}` })))), detail);
+        el("a", { href: `#/c/${t.conversation_id}`, title: "See how the helper worked it out", text: t.tool_calls ? `${t.tool_calls} tool call${t.tool_calls === 1 ? "" : "s"}` : "transcript" })))), detail);
   }
   if (ui.images?.length) {
     const media = el("div", { class: "tool-media" }, ...ui.images.map((img) =>
@@ -463,7 +463,7 @@ export class Chat {
   onStatus(ev) {
     if (!state.run) return;
     state.run.status = ev.state;
-    let label;
+    let label = ev.label;
     if (ev.state === "tool") {
       const card = [...(this.live?.cards.values() || [])].pop();
       label = card?.card.querySelector(".tool-summary")?.textContent;

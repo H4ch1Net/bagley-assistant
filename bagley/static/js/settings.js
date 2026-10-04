@@ -674,7 +674,7 @@ export class Settings {
       connect.addEventListener("click", go);
       token.addEventListener("keydown", (e) => e.key === "Enter" && go());
       return box.replaceChildren(el("div", { class: "section" },
-        el("div", { class: "section-title", text: "1. Create a bot" }),
+        el("div", { class: "section-title", text: "Create a bot" }),
         el("p", { class: "help", style: "margin:0 0 10px" }, "In Telegram, message ", el("b", { text: "@BotFather" }), ", send ", el("code", { text: "/newbot" }), ", pick a name, and paste the token it gives you."),
         el("div", { class: "inline" }, token, connect),
         t.locked ? el("div", { class: "help", text: "Set by BAGLEY_TELEGRAM_TOKEN." }) : null,
@@ -693,7 +693,7 @@ export class Settings {
       const code = t.code;
       const link = `https://t.me/${t.bot}?start=${code.replace("-", "")}`;
       sections.push(el("div", { class: "section" },
-        el("div", { class: "section-title", text: "2. Pair your phone" }),
+        el("div", { class: "section-title", text: "Pair your phone" }),
         el("p", { class: "help", style: "margin:0 0 10px" }, "Open the link on your phone, or send ", el("code", { class: "mono", text: `/pair ${code}` }), ` to @${t.bot}. Each code pairs one chat and expires after 15 minutes.`),
         el("div", { class: "inline" },
           el("a", { class: "btn btn-primary btn-sm", href: link, target: "_blank", rel: "noopener" }, icon("external-link", "icon-sm"), "Open in Telegram"),

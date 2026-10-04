@@ -22,6 +22,8 @@ Bagley is a personal assistant that runs against a model on your own computer. I
 
 Because it runs on your machine, it can do things a hosted chat app cannot. It keeps working when no window is open: reminders, scheduled tasks and page watchers run in the background and notify you. It searches your own documents by meaning, not just keywords. It edits files with a diff and a one-click undo, runs Python and shows the charts inline, and can check what is slowing your computer down.
 
+It also gets better with use, in the spirit of [Hermes Agent](https://github.com/NousResearch/hermes-agent). After a task that takes several steps, it writes the procedure down as a skill and improves that skill the next time it follows it. For bigger jobs it keeps a visible plan, asks you when a choice matters, hands research to helper agents with a fresh context, and looks up earlier conversations. You can talk to it from your phone through your own Telegram bot.
+
 It is a single Python package with no build step. The server is FastAPI, the UI is plain JavaScript, and everything is stored in one SQLite file.
 
 ## Features
@@ -32,6 +34,11 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 | **Local models** | Native Ollama support (context size, reasoning, one-click model downloads) and any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, LocalAI, Jan, OpenRouter, OpenAI. |
 | **Agent loop** | Multi-step tool calling with streaming, cancellation, step limits and approvals. Models without native function calling use a text-based tool protocol automatically. |
 | **Built-in tools** | Web search, page reader, weather, calculator, time zones, workspace files, long-term memory, optional shell. |
+| **Skills that it learns** | Reusable procedures in the open `SKILL.md` format. After a reply that took five or more tool calls, Bagley reviews what it did in the background and saves a skill, or improves the one it followed, plus any lasting facts you told it. Four skills ship with it; skills written for other agents can be dropped in. |
+| **Plans and questions** | For multi-step tasks it shows a live checklist, and when a choice matters it asks with option buttons instead of guessing. |
+| **Helper agents** | `delegate_task` hands up to five subtasks to helpers that start with an empty context, so long reading doesn't fill the conversation. Only their answers come back; each helper's transcript is one click away. |
+| **Recall** | `search_chats` finds and reads earlier conversations ("what did we decide about the trip?"). |
+| **Telegram** | Chat with Bagley from your phone through your own bot: approvals and questions as buttons, charts as photos, reminders and automation results as messages. Outbound only, paired with a one-time code. |
 | **Automations** | Reminders, scheduled tasks ("weekdays at 8:00, give me the weather and my calendar notes") and web page watchers ("tell me when this price drops"). They run in the background, post into their own chat and notify you, also as a desktop notification. Create them in chat or under **Settings → Automations**. |
 | **Knowledge base** | Indexes your workspace and any folders you add (text, Markdown, code, HTML, PDF) into a local full-text index. With an embedding model installed (`ollama pull nomic-embed-text`) it also searches by meaning. Answers cite the files they came from. |
 | **Undoable file changes** | Every write, edit, move and delete is journaled. Tool cards show a diff, and **Revert** restores the previous version. Deleted files are kept in the journal, not destroyed. |
@@ -77,24 +84,31 @@ This opens <http://127.0.0.1:8765>. If no model server is found, the start scree
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/chart.png" alt="A chart made by run_python shown inside the chat"><br><sub>Python runs in the workspace and its charts appear in the chat.</sub></td>
-    <td width="50%"><img src="docs/screenshots/diff.png" alt="A file edit with a diff and a Revert button"><br><sub>File changes show a diff and can be reverted.</sub></td>
+    <td width="50%"><img src="docs/screenshots/agent.png" alt="A reply with a plan checklist, two helper agents and a question with option buttons"><br><sub>A plan, helper agents doing the reading, and a question when a choice matters.</sub></td>
+    <td width="50%"><img src="docs/screenshots/skills.png" alt="Skills settings with built-in and learned skills"><br><sub>Skills it learned from earlier tasks, next to the built-in ones.</sub></td>
   </tr>
   <tr>
+    <td width="50%"><img src="docs/screenshots/telegram.png" alt="Telegram settings with a connected bot, a pairing code and a paired phone"><br><sub>Your own Telegram bot, paired with a one-time code.</sub></td>
+    <td width="50%"><img src="docs/screenshots/chart.png" alt="A chart made by run_python shown inside the chat"><br><sub>Python runs in the workspace and its charts appear in the chat.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/diff.png" alt="A file edit with a diff and a Revert button"><br><sub>File changes show a diff and can be reverted.</sub></td>
     <td><img src="docs/screenshots/automations.png" alt="Automations settings with a scheduled task, a reminder and a page watcher"><br><sub>Scheduled tasks, reminders and page watchers.</sub></td>
+  </tr>
+  <tr>
     <td><img src="docs/screenshots/knowledge.png" alt="Knowledge settings with indexed folders and search results"><br><sub>Knowledge base with keyword and semantic search.</sub></td>
+    <td><img src="docs/screenshots/settings.png" alt="Model settings"><br><sub>Model settings, installed models and what is loaded in memory.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/approval.png" alt="Approval prompt before writing a file"><br><sub>Actions that change things wait for approval.</sub></td>
     <td width="50%"><img src="docs/screenshots/empty.png" alt="Start screen with suggestions"><br><sub>Start screen.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/settings.png" alt="Model settings"><br><sub>Model settings, installed models and what is loaded in memory.</sub></td>
     <td><img src="docs/screenshots/onboarding.png" alt="Setup card when no model server is running"><br><sub>First run without a model server. The tracker reads NO SIGNAL.</sub></td>
+    <td><img src="docs/screenshots/light.png" alt="Light theme"><br><sub>Light theme.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/light.png" alt="Light theme"><br><sub>Light theme.</sub></td>
-    <td align="center"><img src="docs/screenshots/mobile.png" alt="Phone layout" width="220"><br><sub>Phone layout.</sub></td>
+    <td align="center" colspan="2"><img src="docs/screenshots/mobile.png" alt="Phone layout" width="220"><br><sub>Phone layout.</sub></td>
   </tr>
 </table>
 
@@ -143,6 +157,12 @@ On macOS use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | `make_directory` | Create a folder in the workspace | |
 | `search_knowledge` `read_document` | Search and read your indexed documents | |
 | `remember` `forget` | Long-term memory, injected into every conversation | |
+| `update_plan` | Show a checklist for a multi-step task and keep it current | |
+| `ask_user` | Ask you a question, with option buttons, and wait for the answer | |
+| `search_chats` | Search and read earlier conversations | |
+| `delegate_task` | Hand subtasks to helper agents with a fresh context | |
+| `read_skill` | Load a saved procedure before a matching task | |
+| `save_skill` `delete_skill` | Write, improve or remove a skill | ✓ |
 | `set_reminder` `list_automations` `cancel_automation` | Reminders and managing automations | |
 | `schedule_task` `watch_webpage` | Create a recurring task or a page watcher | ✓ |
 | `system_status` | CPU, memory, disk, battery, uptime and the busiest processes | |
@@ -157,6 +177,20 @@ Tools can be switched off individually in **Settings → Tools**. File tools can
 Ask in plain language ("remind me in 20 minutes to check the oven", "every weekday at 8:00 summarise the news on Rust", "watch this page and tell me when the price changes") or use **Settings → Automations**. Schedules accept forms like `in 45 minutes`, `at 18:30`, `tomorrow at 9am`, `every 2 hours`, `daily at 07:30`, `weekdays at 09:00` and `mondays, thursdays at 18:00`.
 
 Automations run while Bagley is running. A run that was missed while it was off happens once at the next start. Unattended runs are restricted (see [Security](#security)); a refused tool call is recorded in the automation's chat.
+
+### Skills and learning
+
+A skill is a folder with a `SKILL.md` file: front matter with a `name` and a one-line `description`, then Markdown steps. Bagley lists every skill in its instructions and reads the full text with `read_skill` when one matches the request. Four ship with it (`research-a-question`, `morning-briefing`, `analyze-a-spreadsheet`, `tidy-a-folder`). Yours live in `~/.bagley/skills/`, where skills written for other agents in the same format also work.
+
+Learning happens after a reply that took five or more tool calls. Bagley looks back at your request, the tools it called and its answer, then saves a new skill, improves the skill it followed, or remembers a fact you stated about yourself. It never sees tool results while doing this, so a web page can't plant a skill or a memory. Each time it learns something you get a notification, and everything it saved is listed in **Settings → Skills** and **Settings → Memory**, where you can edit or delete it, or switch learning off.
+
+### Telegram
+
+1. In Telegram, message **@BotFather**, send `/newbot` and copy the token.
+2. Paste it in **Settings → Telegram** (or set `BAGLEY_TELEGRAM_TOKEN`).
+3. Open the pairing link on your phone, or send the bot `/pair` and the code shown in Settings. Each code pairs one chat and expires after 15 minutes. Messages from chats that aren't paired get no further than a pairing hint.
+
+Then talk to it as in the app. `/new` starts a new chat and `/stop` cancels a reply. Approvals and `ask_user` questions arrive as buttons, charts from `run_python` as photos, and reminders and automation results as messages. Bagley polls Telegram over HTTPS, so nothing has to be reachable from the internet, but it only answers while it is running.
 
 ### Knowledge base
 
@@ -174,6 +208,14 @@ Bagley picks the first installed model that supports tools unless you choose one
 | `gpt-oss:20b` | 14 GB | Best quality of these. Needs about 16 GB of memory. |
 
 Models without native function calling (for example `gemma2`) still get tools through the text-based protocol. You can force a mode under **Settings → Model → Tool calling**.
+
+The agentic features (plans, helpers, learning) work with small models but are noticeably more reliable from about 8B parameters up, with a context window of 16k tokens or more.
+
+### Which computer runs the model
+
+Run the model on the machine with the most GPU memory (VRAM), or on a Mac with the most unified memory. Speed comes from fitting the whole model in that memory: a desktop with an 8 to 12 GB graphics card runs `qwen3:8b` comfortably and `qwen3:14b` with 12 GB or more. A laptop with integrated graphics runs `qwen3:4b` on the CPU, slowly. Automations and Telegram need Bagley to be running, so the machine that stays on is the better home for both.
+
+Bagley and the model can also be on different machines. Run Ollama on the desktop with `OLLAMA_HOST=0.0.0.0`, then point Bagley at it from the laptop with `BAGLEY_BASE_URL=http://<desktop-ip>:11434`.
 
 ### Other servers
 
@@ -220,10 +262,11 @@ Settings changed in the UI are stored in the database. Environment variables (or
 | `BAGLEY_PYTHON` | Bagley's own | Python interpreter for `run_python`, e.g. a venv with pandas and matplotlib |
 | `BAGLEY_ALLOW_PRIVATE_URLS` | `false` | Let web tools reach private addresses |
 | `BAGLEY_SEARXNG_URL` | | Use SearXNG for web search |
+| `BAGLEY_TELEGRAM_TOKEN` | | Telegram bot token from @BotFather |
 
 </details>
 
-Data lives in `~/.bagley`: `bagley.db` (chats, memories, settings, automations, file change journal), `knowledge.db` (search index), `journal/` (previous versions of changed files), `workspace/`, `plugins/` and `mcp.json`. Deleted chats can be restored with Undo; they are purged on the first start more than 24 hours after deletion.
+Data lives in `~/.bagley`: `bagley.db` (chats, memories, settings, automations, file change journal), `knowledge.db` (search index), `journal/` (previous versions of changed files), `skills/` (your and learned skills), `workspace/`, `plugins/` and `mcp.json`. Deleted chats can be restored with Undo; they are purged on the first start more than 24 hours after deletion.
 
 ## Extending
 
@@ -279,6 +322,9 @@ Bagley can act on your behalf, so it is locked down by default:
 - File changes, `run_command`, `run_python`, new scheduled tasks and watchers, and untrusted MCP tools wait for your approval. Shell and Python access are off unless you enable them, and stopping a command ends everything it started.
 - Automations run without you watching. During those runs, tools that need approval are denied, and memories, automations and folders can't be changed. Once a run has read web content it can't read your files or notes, and it can only open pages from its search results. Watcher instructions run with no tools at all. Text on a web page therefore can't send your data anywhere.
 - Every file change is journaled with the previous version, so a bad edit can be reverted.
+- Helper agents run under the same rules as automations, can't ask you anything, and can't start helpers of their own.
+- The learning loop only sees your words, the names and arguments of the tools it called, and its own answer, never tool results. Saving a skill from a chat asks first.
+- Telegram serves only chats paired with a one-time code. Taps from any other chat are ignored, and the bot token is stored like the API key and never sent to the browser.
 - A saved API key is cleared when the server URL changes, and a key set through `BAGLEY_API_KEY` locks the server URL, so the key only goes where you configured it.
 - The UI loads nothing from the internet and sends a strict Content-Security-Policy. Model output is sanitized: no images, frames or forms, so a prompt-injected page can't make the browser leak data.
 
@@ -288,7 +334,11 @@ Bagley can act on your behalf, so it is locked down by default:
 flowchart LR
   UI["Web UI<br/>vanilla JS, canvas avatar"] <-- "WebSocket events" --> S["FastAPI server"]
   CLI["bagley chat / ask"] --> A
+  TG["Telegram gateway"] --> A
   S --> A["Agent loop"]
+  A --> H["Helper agents"]
+  A -. "after complex tasks" .-> L["Learning loop"]
+  L --> SK[("Skills<br/>SKILL.md")]
   SC["Scheduler<br/>tasks, reminders, watchers"] --> A
   S --> SC
   A <--> P{"Provider"}
@@ -313,14 +363,20 @@ bagley/
 ├── automations.py    Schedule parser and background scheduler
 ├── cli.py            bagley serve | chat | ask | doctor
 ├── config.py         Server config and user preferences (env + database)
+├── delegation.py     Helper agents with a fresh context
 ├── journal.py        File change journal, diffs and revert
 ├── knowledge.py      Document index: FTS5, embeddings, rank fusion
+├── learning.py       Reflection after complex tasks: skills and facts
 ├── mcp.py            MCP stdio client
+├── policy.py         Limits for runs nobody is watching
 ├── prompts.py        Personas, system prompt, text-based tool protocol
 ├── runtime.py        Shared state: store, tools, provider, scheduler, notifications
 ├── server.py         HTTP API, WebSocket sessions, security middleware
+├── skills.py         SKILL.md store (built-in, yours, learned)
 ├── store.py          SQLite persistence
+├── telegram.py       Telegram gateway
 ├── toolroute.py      On-demand tool loading
+├── builtin_skills/   Skills that ship with Bagley
 ├── llm/              Ollama and OpenAI-compatible providers, stream parser
 ├── tools/            Registry, @tool decorator and built-in tools
 └── static/           Web UI (HTML, CSS, JS modules, vendored marked and DOMPurify)

@@ -176,6 +176,102 @@ def capture(stack: DemoStack) -> None:
         page.screenshot(path=OUT / "chart.png")
         page.context.close()
 
+        # 8b. Agentic reply: a plan, helper agents and a question.
+        page = page_for(1440, 900)
+        steps = ["Research both tools", "Compare them for a laptop", "Recommend one"]
+        stack.mock.script = [
+            Reply(
+                reasoning="Two tools to research. Helpers can read about each one separately.",
+                tool_calls=[
+                    (
+                        "update_plan",
+                        {"steps": [f"[>] {steps[0]}", *[f"[ ] {x}" for x in steps[1:]]]},
+                    )
+                ],
+            ),
+            Reply(
+                tool_calls=[
+                    (
+                        "delegate_task",
+                        {
+                            "tasks": [
+                                "Summarise Ollama: platforms, GPU support, model library, API.",
+                                "Summarise LM Studio: platforms, GPU support, model library, API.",
+                            ],
+                            "context": "The user wants to run local models on a laptop.",
+                        },
+                    )
+                ]
+            ),
+            Reply(text="Ollama runs as a background service with a CLI and an HTTP API."),
+            Reply(
+                text="LM Studio is a desktop app with a model browser and an OpenAI-style server."
+            ),
+            Reply(
+                tool_calls=[
+                    (
+                        "update_plan",
+                        {"steps": [f"[x] {steps[0]}", f"[x] {steps[1]}", f"[>] {steps[2]}"]},
+                    )
+                ]
+            ),
+            Reply(
+                tool_calls=[
+                    (
+                        "ask_user",
+                        {
+                            "question": "What matters most on your laptop?",
+                            "options": ["Battery life", "Ease of use", "Raw speed"],
+                        },
+                    )
+                ]
+            ),
+            Reply(
+                text="Then **Ollama**: it idles at almost no power and unloads models when unused."
+            ),
+        ]
+        page.fill("#composer-input", "Compare Ollama and LM Studio for running models on my laptop")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".question .question-options .btn", timeout=20000)
+        page.wait_for_timeout(900)
+        page.screenshot(path=OUT / "agent.png")
+        page.click(".question-options >> text=Battery life")
+        page.wait_for_selector("#send-btn:not(.stop)", timeout=20000)
+
+        # 8c. Skills, two of them learned.
+        stack.runtime.skills.save(
+            "split-a-bill",
+            "Split a restaurant bill with tip between several people and round each share.",
+            "1. calculate the total with the tip.\n2. Divide by the number of people.\n3. Round up.",
+            source="learned",
+        )
+        stack.runtime.skills.save(
+            "weekly-report",
+            "Draft the Friday status report from this week's notes and closed tasks.",
+            "1. search_knowledge for this week's notes.\n2. Group by project.\n3. Keep it short.",
+            source="learned",
+        )
+        page.reload()
+        page.wait_for_selector(".conn .dot.ok")
+        page.keyboard.press("Control+,")
+        page.click("#tab-skills")
+        page.wait_for_selector(".skill-row")
+        page.wait_for_timeout(400)
+        page.screenshot(path=OUT / "skills.png")
+
+        # 8d. Telegram, connected and paired.
+        from tests.fake_telegram import GOOD_TOKEN
+
+        httpx.put(f"{url}api/telegram", json={"token": GOOD_TOKEN})
+        page.click("#tab-telegram")
+        page.wait_for_selector(".pair-code")
+        code = page.locator(".pair-code").inner_text()
+        stack.telegram.say(4242, f"/pair {code}", name="Ana")
+        page.wait_for_selector(".telegram-chat")
+        page.wait_for_timeout(600)
+        page.screenshot(path=OUT / "telegram.png")
+        page.context.close()
+
         # 9. Light theme.
         page = page_for(1440, 900, theme="light")
         page.click(".conv-link >> text=Weekend weather in Lisbon")

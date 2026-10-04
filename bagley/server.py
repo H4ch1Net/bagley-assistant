@@ -179,7 +179,8 @@ class ChatSession:
         qid = uuid.uuid4().hex[:12]
         fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self.questions[qid] = fut
-        await self.emit({"type": "status", "state": "approval"})  # The avatar waits on the user.
+        # The avatar waits on the user, as for an approval.
+        await self.emit({"type": "status", "state": "approval", "label": "Waiting for your answer"})
         await self.emit({"type": "question", "id": qid, "question": question, "options": options})
         try:
             return await asyncio.wait_for(fut, timeout=APPROVAL_TIMEOUT) or None
@@ -700,7 +701,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     @app.get("/api/skills")
     async def list_skills() -> list[dict[str, Any]]:
-        return [s.summary() for s in rt().skills.all()]
+        return rt().skills.index(limit=500)  # Yours and learned first, newest first.
 
     @app.get("/api/skills/{name}")
     async def get_skill(name: str) -> dict[str, Any]:
