@@ -70,6 +70,7 @@ def system_prompt(
     workspace: str,
     prompt_mode: bool,
     knowledge: dict[str, Any] | None = None,
+    skills: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
 ) -> str:
     now = now or datetime.now().astimezone()
@@ -97,6 +98,12 @@ def system_prompt(
                 f"\n- The user has a private knowledge base of {knowledge['files']} documents ({labels}). "
                 "Use search_knowledge before answering questions about their notes, projects or documents, "
                 "and cite the file paths you used."
+            )
+        if skills and any(t.name == "read_skill" for t in tools):
+            index = "\n".join(f"- {s['name']}: {s['description']}" for s in skills)
+            guide += (
+                "\n\n# Skills\nSaved procedures for recurring tasks. When one matches the request, "
+                f"call read_skill with its name first, then follow it.\n{index}"
             )
         if prompt_mode:
             listing = "\n".join(

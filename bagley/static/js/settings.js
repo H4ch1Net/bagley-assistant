@@ -32,6 +32,7 @@ const TABS = [
   { id: "general", label: "General", icon: "sparkles" },
   { id: "model", label: "Model", icon: "cpu" },
   { id: "automations", label: "Automations", icon: "calendar-clock" },
+  { id: "skills", label: "Skills", icon: "graduation-cap" },
   { id: "tools", label: "Tools", icon: "wrench" },
   { id: "knowledge", label: "Knowledge", icon: "library" },
   { id: "memory", label: "Memory", icon: "bookmark" },
@@ -105,10 +106,11 @@ function select(options, current, onChange) {
 }
 
 export class Settings {
-  constructor({ onModelsChanged, onMemoriesChanged, onAutomationsChanged, openChat }) {
+  constructor({ onModelsChanged, onMemoriesChanged, onSkillsChanged, onAutomationsChanged, openChat }) {
     this.dialog = $("#settings-dialog");
     this.onModelsChanged = onModelsChanged;
     this.onMemoriesChanged = onMemoriesChanged;
+    this.onSkillsChanged = onSkillsChanged;
     this.onAutomationsChanged = onAutomationsChanged;
     this.openChat = openChat;
     this.tab = "general";
@@ -538,6 +540,95 @@ export class Settings {
       el("div", { class: "inline", style: "gap:2px" }, run, openChat, remove),
       el("label", { class: "switch" }, toggle, el("span")),
     );
+  }
+
+  // Skills ----------------------------------------------------------------------------------
+
+  render_skills(panel) {
+    const folder = `${state.info?.data_dir || "~/.bagley"}/skills`;
+    this.skillBox = el("div", { class: "list" });
+    this.skillEditor = el("div");
+    const create = el("button", { class: "btn btn-sm", type: "button", onclick: () => this.editSkill(null) }, icon("plus", "icon-sm"), "New skill");
+    panel.append(
+      el("h3", { text: "Skills" }),
+      el("p", { class: "lead" }, "Procedures Bagley follows for recurring tasks. After it works through a task that takes several steps, it writes the procedure down as a skill, and it improves a skill each time it uses one. Skills from other agents work too: drop their folders into ", el("code", { class: "mono", text: folder }), "."),
+      el("div", { class: "section" },
+        toggleRow("Learn from tasks", "After a reply that took five or more tool calls, Bagley looks back at it and may save a skill or a fact you told it. You get a notification each time.", value("learning"), (v) => savePrefs({ learning: v })),
+      ),
+      el("div", { class: "section" },
+        el("div", { class: "inline", style: "justify-content:space-between;margin-bottom:12px" }, el("div", { class: "section-title", style: "margin:0", text: "Your skills" }), create),
+        this.skillEditor,
+        this.skillBox,
+      ),
+    );
+    this.renderSkillList();
+  }
+
+  renderSkillList() {
+    if (!this.skillBox?.isConnected) return;
+    const label = { learned: "learned", builtin: "built-in", user: "yours" };
+    keepFocus(this.skillBox, () => this.skillBox.replaceChildren(...(state.skills.length ? state.skills.map((sk) => {
+      const edit = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: sk.editable ? "Edit" : "Customize", "aria-label": `Edit ${sk.name}`, onclick: () => this.editSkill(sk) }, icon("pencil", "icon-sm"));
+      const remove = sk.editable ? el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Delete", "aria-label": `Delete ${sk.name}` }, icon("trash-2", "icon-sm")) : null;
+      remove?.addEventListener("click", async () => {
+        if (!(await confirmDialog({ title: `Delete ${sk.name}?`, message: "Bagley won't follow this procedure any more.", confirm: "Delete", danger: true }))) return;
+        try {
+          await api.del(`/api/skills/${encodeURIComponent(sk.name)}`);
+          toast(`Deleted ${sk.name}`);
+        } catch (err) {
+          toast(err.message, { type: "error" });
+        }
+        await this.onSkillsChanged();
+      });
+      return el("div", { class: "list-item skill-row", dataset: { name: sk.name } },
+        el("span", { class: "tool-icon" }, icon(sk.source === "learned" ? "sparkles" : sk.source === "builtin" ? "book-open" : "pencil", "icon-sm")),
+        el("div", { class: "grow" },
+          el("div", { class: "name" }, sk.name,
+            el("span", { class: `badge${sk.source === "learned" ? " badge-accent" : ""}`, text: label[sk.source] }),
+            sk.source !== "builtin" ? el("span", { class: "subtle", style: "font:400 12px var(--font-sans)", text: relTime(sk.updated) }) : null),
+          el("div", { class: "desc", text: sk.description }),
+        ),
+        el("div", { class: "inline", style: "gap:2px" }, edit, remove),
+      );
+    }) : [el("div", { class: "list-empty", text: "No skills yet." })])));
+  }
+
+  async editSkill(sk) {
+    let current = { name: "", description: "", instructions: "" };
+    if (sk) {
+      try {
+        current = await api.get(`/api/skills/${encodeURIComponent(sk.name)}`);
+      } catch (err) {
+        return toast(err.message, { type: "error" });
+      }
+    }
+    const name = el("input", { class: "input mono", value: current.name, placeholder: "weekly-report", maxlength: 64, disabled: Boolean(sk), spellcheck: "false" });
+    const description = el("input", { class: "input", value: current.description, maxlength: 300, placeholder: "One sentence: what it does and when to use it" });
+    const instructions = el("textarea", { class: "textarea mono", rows: 10, maxlength: 12000, placeholder: "1. Search for…\n2. Read…\n3. Answer with…" });
+    instructions.value = current.instructions;
+    const close = () => this.skillEditor.replaceChildren();
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button" }, icon("check", "icon-sm"), "Save");
+    save.addEventListener("click", async () => {
+      const key = name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!key) return name.focus();
+      save.disabled = true;
+      try {
+        await api.put(`/api/skills/${encodeURIComponent(key)}`, { description: description.value.trim(), instructions: instructions.value });
+        toast(`Saved ${key}`);
+        close();
+        await this.onSkillsChanged();
+      } catch (err) {
+        toast(err.message, { type: "error" });
+        save.disabled = false;
+      }
+    });
+    this.skillEditor.replaceChildren(el("div", { class: "skill-editor" },
+      field("Name", name, { help: sk?.source === "builtin" ? "Saving makes your own copy, which replaces the built-in one." : "Lowercase words joined by hyphens." }),
+      field("Description", description),
+      field("Instructions", instructions, { help: "Markdown. Numbered steps that name the tools work best." }),
+      el("div", { class: "inline" }, save, el("button", { class: "btn btn-sm", type: "button", text: "Cancel", onclick: close })),
+    ));
+    (sk ? instructions : name).focus();
   }
 
   // Knowledge -------------------------------------------------------------------------------

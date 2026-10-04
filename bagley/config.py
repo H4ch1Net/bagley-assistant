@@ -144,6 +144,7 @@ class Preferences(BaseModel):
     smart_titles: bool = True
     knowledge_folders: list[str] = Field(default_factory=list)
     embedding_model: str = ""  # "" picks an installed embedding model, "off" disables.
+    learning: bool = True  # Save skills and facts after complex tasks.
 
 
 PREFERENCE_ENV: dict[str, str] = {

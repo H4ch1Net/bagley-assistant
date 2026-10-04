@@ -297,10 +297,20 @@ class Registry:
 
 
 def build_registry(config: ServerConfig) -> Registry:
-    from bagley.tools import automation, core, files, knowledge, memory, shell, system, web
+    from bagley.tools import (
+        automation,
+        core,
+        files,
+        knowledge,
+        memory,
+        shell,
+        skills,
+        system,
+        web,
+    )
 
     registry = Registry()
-    for module in (core, web, files, knowledge, memory, system, automation):
+    for module in (core, web, files, knowledge, memory, skills, system, automation):
         registry.add_module(module, "builtin")
     if config.enable_shell:
         registry.add_module(shell, "builtin")

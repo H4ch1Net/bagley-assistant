@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from bagley.learning import LEARN_AFTER, reflect
 from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError
 from bagley.llm.textparse import StreamParser
 from bagley.policy import UnattendedPolicy
@@ -35,6 +36,7 @@ class RunRequest:
     mode: Literal["send", "regenerate", "edit"] = "send"
     tools: bool = True
     policy: UnattendedPolicy | None = None  # Set for runs nobody is watching.
+    learn: bool = True  # Reflect afterwards and save skills (the learning loop).
 
 
 @dataclass
@@ -233,7 +235,9 @@ class Agent:
         pending_calls: list[ToolCall] = []
         stats: dict[str, Any] = {"completion_tokens": 0}
         model = ""
-        stopped = False
+        stopped = failed = False
+        trace: list[dict[str, Any]] = []  # Tool calls in this reply, for the learning loop.
+        answer = ""
         try:
             provider = await rt.provider()
             model = await rt.resolve_model(provider, prefs)
@@ -299,12 +303,19 @@ class Agent:
                 # neither saves the text twice nor leaves its tool calls without results.
                 pending_calls = list(step.calls)
                 step = _Step()
+                answer = assistant["content"] or answer
                 await emit({"type": "message", "message": assistant})
                 if not pending_calls:
                     break
                 while pending_calls:
                     await self._run_tool(
-                        cid, pending_calls[0], emit, approve, prefs.disabled_tools, req.policy
+                        cid,
+                        pending_calls[0],
+                        emit,
+                        approve,
+                        prefs.disabled_tools,
+                        req.policy,
+                        trace,
                     )
                     pending_calls.pop(0)
                 if index == prefs.max_steps - 1:
@@ -319,9 +330,11 @@ class Agent:
             stopped = True
             self._save_partial(cid, step, pending_calls, model)
         except LLMError as exc:
+            failed = True
             self._save_partial(cid, step, pending_calls, model)
             await emit({"type": "error", "message": exc.message, "hint": exc.hint})
         except Exception as exc:
+            failed = True
             log.exception("Agent run failed")
             self._save_partial(cid, step, pending_calls, model)
             await emit({"type": "error", "message": f"Something went wrong: {exc}"})
@@ -341,6 +354,18 @@ class Agent:
             task = asyncio.create_task(self._smart_title(cid, first_text, model, emit))
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+        # Learn from complex tasks the user was present for; never from unattended runs.
+        learn = prefs.learning and req.policy is None and req.learn
+        if learn and model and not (stopped or failed) and len(trace) >= LEARN_AFTER:
+            rt.spawn(self._learn(model, first_text, trace, answer))
+
+    async def _learn(
+        self, model: str, request: str, trace: list[dict[str, Any]], answer: str
+    ) -> None:
+        try:
+            await reflect(self.rt, model=model, request=request, trace=trace, answer=answer)
+        except Exception as exc:  # Learning is a bonus; never surface failures.
+            log.debug("Reflection failed: %s", exc)
 
     # Context --------------------------------------------------------------------------------
 
@@ -355,6 +380,7 @@ class Agent:
             workspace=str(rt.config.workspace),
             prompt_mode=mode == "prompt",
             knowledge=rt.knowledge.status(),
+            skills=rt.skills.index(),
         )
         reserve = min(2048, prefs.context_tokens // 4)
         specs = len(json.dumps([t.spec() for t in tools])) // 3 if mode == "native" else 0
@@ -451,6 +477,7 @@ class Agent:
         approve: Approve,
         disabled: list[str],
         policy: UnattendedPolicy | None = None,
+        trace: list[dict[str, Any]] | None = None,
     ) -> None:
         tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
         if tool and tool.name in disabled:
@@ -501,6 +528,8 @@ class Agent:
                     log.exception("Tool %s crashed", call.name)
                     result = f"Error: {exc.__class__.__name__}: {exc}"
         duration = round((time.monotonic() - started) * 1000)
+        if trace is not None:
+            trace.append({"name": call.name, "arguments": call.arguments, "ok": ok})
         self.rt.store.add_message(
             cid,
             "tool",

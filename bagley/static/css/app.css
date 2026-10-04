@@ -941,6 +941,8 @@ button.stat:hover { background: var(--surface); }
 .list-item .tool-icon { margin-top: 1px; }
 .list-item.automation .name { font-family: var(--font-sans); font-size: 14px; gap: 8px; }
 .list-item.model-row { align-items: center; }
+.skill-editor { display: grid; gap: 2px; padding: 14px; margin-bottom: 12px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface-2); }
+.skill-editor .textarea { font-size: 12.5px; line-height: 1.5; }
 .list-item.automation .auto-name { font-weight: 600; }
 .list-item.automation.off .auto-name { color: var(--text-3); }
 .list-item .desc { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

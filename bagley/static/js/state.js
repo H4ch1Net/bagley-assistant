@@ -14,6 +14,7 @@ export const state = {
   tools: [],
   toolsInfo: null,
   memories: [],
+  skills: [],
   automations: [],
   knowledge: null,
   models: [],
@@ -81,12 +82,15 @@ const TOOL_ICONS = {
   search_knowledge: "library",
   read_document: "book-open",
   run_python: "code",
+  read_skill: "graduation-cap",
+  save_skill: "graduation-cap",
+  delete_skill: "trash-2",
   load_tools: "plug",
   remember: "bookmark",
   forget: "eraser",
   run_command: "terminal",
 };
-const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench", automation: "calendar-clock", knowledge: "library" };
+const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench", automation: "calendar-clock", knowledge: "library", skills: "graduation-cap" };
 
 export function toolIcon(name, category) {
   return TOOL_ICONS[name] || CATEGORY_ICONS[category || toolInfo(name)?.category] || "wrench";

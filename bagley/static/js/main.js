@@ -67,6 +67,7 @@ const settings = new Settings({
     await Promise.all([loadModels(), refreshHealth()]);
   },
   onMemoriesChanged: loadMemories,
+  onSkillsChanged: () => loadSkills(),
   onAutomationsChanged: () => loadAutomations(),
   openChat: (id) => navigate(id),
 });
@@ -88,6 +89,16 @@ async function loadTools() {
 async function loadMemories() {
   state.memories = await api.get("/api/memories");
   renderStats();
+}
+
+async function loadSkills() {
+  try {
+    state.skills = await api.get("/api/skills");
+  } catch {
+    return;
+  }
+  renderStats();
+  if (settings.dialog.open && settings.tab === "skills") settings.renderSkillList();
 }
 
 async function loadKnowledge() {
@@ -256,6 +267,11 @@ socket.on("notification", (ev) => {
 
 socket.on("conversations.changed", () => sidebar.refresh());
 socket.on("automations.changed", () => loadAutomations());
+socket.on("skills.changed", () => loadSkills());
+socket.on("memories.changed", async () => {
+  await loadMemories();
+  if (settings.dialog.open && settings.tab === "memory") settings.refresh();
+});
 socket.on("knowledge.changed", (ev) => {
   state.knowledge = ev.status;
   renderStats();
@@ -511,6 +527,7 @@ function renderStats() {
     stat("wrench", "Tools", el("span", { class: "v", text: `${enabledTools} enabled` }), () => settings.open("tools")),
     stat("calendar-clock", "Automations", el("span", { class: "v", text: automationText() }), () => settings.open("automations")),
     stat("library", "Knowledge", el("span", { class: "v", text: state.knowledge ? (state.knowledge.state === "indexing" ? "Indexing…" : `${state.knowledge.files} files`) : "–" }), () => settings.open("knowledge")),
+    stat("graduation-cap", "Skills", el("span", { class: "v", text: skillText() }), () => settings.open("skills")),
     stat("bookmark", "Memory", el("span", { class: "v", text: `${state.memories.length} ${state.memories.length === 1 ? "fact" : "facts"}` }), () => settings.open("memory")),
     voice.canSpeak
       ? stat(state.ui.speak ? "volume-2" : "volume-x", "Voice", el("span", { class: "v", text: state.ui.speak ? "Reads replies" : "Muted" }), () => {
@@ -520,6 +537,11 @@ function renderStats() {
       : null,
   );
   renderPrivacy();
+}
+
+function skillText() {
+  const learned = state.skills.filter((s) => s.source === "learned").length;
+  return learned ? `${state.skills.length} · ${learned} learned` : `${state.skills.length}`;
 }
 
 function automationText() {
@@ -762,7 +784,7 @@ async function boot() {
   updateComposer();
   setStatus("idle");
   try {
-    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), sidebar.refresh()]);
+    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), loadSkills(), sidebar.refresh()]);
     state.info = info;
   } catch (err) {
     toast(err.message, { type: "error" });

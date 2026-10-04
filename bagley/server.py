@@ -42,6 +42,7 @@ from bagley.config import (
 from bagley.llm import LLMError, ToolCall
 from bagley.prompts import PERSONAS
 from bagley.runtime import Runtime
+from bagley.skills import SkillError
 from bagley.tools import Tool
 
 log = logging.getLogger("bagley.server")
@@ -258,6 +259,11 @@ class FolderBody(BaseModel):
 
 class MemoryBody(BaseModel):
     content: str = Field(min_length=1, max_length=500)
+
+
+class SkillBody(BaseModel):
+    description: str = Field(min_length=1, max_length=300)
+    instructions: str = Field(min_length=1, max_length=12_000)
 
 
 class PullBody(BaseModel):
@@ -662,6 +668,38 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     @app.get("/api/knowledge/search")
     async def search_knowledge(q: str, limit: int = 8) -> list[dict[str, Any]]:
         return await rt().knowledge.search(q, limit)
+
+    @app.get("/api/skills")
+    async def list_skills() -> list[dict[str, Any]]:
+        return [s.summary() for s in rt().skills.all()]
+
+    @app.get("/api/skills/{name}")
+    async def get_skill(name: str) -> dict[str, Any]:
+        skill = rt().skills.get(name)
+        if skill is None:
+            raise HTTPException(404, "Skill not found.")
+        return {**skill.summary(), "instructions": skill.body}
+
+    @app.put("/api/skills/{name}")
+    async def put_skill(name: str, body: SkillBody) -> dict[str, Any]:
+        existing = rt().skills.get(name)
+        source = "learned" if existing and existing.source == "learned" else "user"
+        try:
+            skill = rt().skills.save(name, body.description, body.instructions, source=source)
+        except SkillError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        await rt().broadcast({"type": "skills.changed"})
+        return {**skill.summary(), "instructions": skill.body}
+
+    @app.delete("/api/skills/{name}", status_code=204)
+    async def delete_skill(name: str) -> Response:
+        skill = rt().skills.get(name)
+        if skill is None:
+            raise HTTPException(404, "Skill not found.")
+        if not rt().skills.delete(skill.name):
+            raise HTTPException(400, "Built-in skills can't be deleted.")
+        await rt().broadcast({"type": "skills.changed"})
+        return Response(status_code=204)
 
     @app.get("/api/memories")
     async def list_memories() -> list[dict[str, Any]]:

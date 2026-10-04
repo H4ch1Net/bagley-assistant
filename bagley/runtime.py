@@ -17,6 +17,7 @@ from bagley.config import Preferences, ServerConfig, resolve_preferences
 from bagley.knowledge import KnowledgeBase, is_embedding_model
 from bagley.llm import LLMError, Provider, create_provider
 from bagley.mcp import McpManager
+from bagley.skills import SkillStore
 from bagley.store import Store
 from bagley.tools import ToolContext, build_registry
 
@@ -47,6 +48,8 @@ class Runtime:
         self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
         self.scheduler = Scheduler(self)
         self.knowledge = KnowledgeBase(self)
+        self.skills = SkillStore(config.data_dir / "skills")
+        self._tasks: set[asyncio.Task[Any]] = set()  # Background work such as learning.
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
@@ -58,7 +61,17 @@ class Runtime:
             self.scheduler.start()
             self.knowledge.start()
 
+    def spawn(self, coro: Awaitable[Any]) -> asyncio.Task[Any]:
+        """Run background work that outlives the request; cancelled on shutdown."""
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
     async def aclose(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         await self.scheduler.stop()
         await self.knowledge.stop()
         self.knowledge.close()
