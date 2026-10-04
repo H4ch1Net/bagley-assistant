@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from typing import Any
 
@@ -26,9 +27,7 @@ class FakeTelegram:
             if token != GOOD_TOKEN:
                 return JSONResponse({"ok": False, "description": "Unauthorized"}, status_code=401)
             if request.headers.get("content-type", "").startswith("multipart/"):
-                form = await request.form()
-                payload = {k: v for k, v in form.items() if isinstance(v, str)}
-                payload["photo"] = form["photo"].filename
+                payload = _multipart((await request.body()).decode("utf-8", "replace"))
             else:
                 payload = json.loads(await request.body() or b"{}")
             if method == "getMe":
@@ -90,3 +89,13 @@ class FakeTelegram:
                 return result
             await asyncio.sleep(0.02)
         raise AssertionError(f"Timed out; sent so far: {self.sent[-5:]}")
+
+
+def _multipart(body: str) -> dict[str, Any]:
+    """Enough of a multipart parser for sendPhoto (python-multipart isn't a dependency)."""
+    fields: dict[str, Any] = {}
+    for m in re.finditer(
+        r'name="(\w+)"(?:; filename="([^"]*)")?\r\n(?:[^\r\n]*\r\n)*?\r\n(.*?)\r\n--', body, re.S
+    ):
+        fields[m.group(1)] = m.group(2) if m.group(2) is not None else m.group(3)
+    return fields
