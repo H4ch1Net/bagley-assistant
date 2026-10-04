@@ -312,3 +312,26 @@ def test_automation_form_keeps_draft_labels_and_toasts(page, stack):
     expect(toast).to_be_visible()
     page.click("#tab-automations")
     expect(page.get_by_label("Name")).to_have_value("")
+
+
+def test_plan_and_question_cards(page, stack):
+    stack.mock.script = [
+        Reply(tool_calls=[("update_plan", {"steps": ["[>] List files", "[ ] Ask", "[ ] Move"]})]),
+        Reply(tool_calls=[("update_plan", {"steps": ["[x] List files", "[>] Ask", "[ ] Move"]})]),
+        Reply(tool_calls=[("ask_user", {"question": "Group by?", "options": ["Type", "Date"]})]),
+        Reply(text="Grouping by date."),
+    ]
+    send(page, "tidy my downloads")
+    page.click(".question-options >> text=Date")
+    wait_idle(page)
+    expect(page.locator(".plan:visible")).to_have_count(1)
+    expect(page.locator(".plan:visible .plan-step.done")).to_have_text("List files")
+    expect(page.locator(".plan:visible .plan-step.doing")).to_have_text("Ask")
+    expect(page.locator(".question")).to_have_count(0)
+    expect(page.locator(".tool-card[data-tool='ask_user'] .tool-summary")).to_contain_text(
+        "Group by?"
+    )
+    sent = [m["content"] for r in stack.mock.requests for m in r["messages"]]
+    assert "The user answered: Date" in sent
+    page.reload()
+    expect(page.locator(".plan:visible")).to_have_count(1)

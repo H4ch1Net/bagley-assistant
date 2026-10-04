@@ -23,6 +23,7 @@ READS_PRIVATE = {
     "search_files",
     "system_status",
     "list_automations",
+    "search_chats",
 }
 CHANGES_STATE = {"remember", "forget", "set_reminder", "cancel_automation", "make_directory"}
 URL = re.compile(r"https?://[^\s\"'<>)\]]+")

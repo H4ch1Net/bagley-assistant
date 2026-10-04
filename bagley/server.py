@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import re
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -149,6 +150,7 @@ class ChatSession:
         self.agent = Agent(runtime)
         self.task: asyncio.Task[None] | None = None
         self.approvals: dict[str, asyncio.Future[str]] = {}
+        self.questions: dict[str, asyncio.Future[str]] = {}
         self.always_allow: set[str] = set()
         self._send_lock = asyncio.Lock()
 
@@ -171,6 +173,20 @@ class ChatSession:
         if decision == "always":
             self.always_allow.add(tool.name)
         return decision in ("allow", "always")
+
+    async def ask(self, question: str, options: list[str]) -> str | None:
+        """Put a question from ask_user to the person in this window and wait for the answer."""
+        qid = uuid.uuid4().hex[:12]
+        fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self.questions[qid] = fut
+        await self.emit({"type": "status", "state": "approval"})  # The avatar waits on the user.
+        await self.emit({"type": "question", "id": qid, "question": question, "options": options})
+        try:
+            return await asyncio.wait_for(fut, timeout=APPROVAL_TIMEOUT) or None
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self.questions.pop(qid, None)
 
     async def serve(self) -> None:
         runtime = self.agent.rt
@@ -205,18 +221,26 @@ class ChatSession:
                 text=str(data.get("text", ""))[:100_000],
                 conversation_id=data.get("conversation_id") or None,
                 mode=mode,
+                ask=self.ask,
             )
             self.task = asyncio.create_task(self.agent.run(req, self.emit, self.approve))
         elif kind == "cancel":
             for fut in self.approvals.values():
                 if not fut.done():
                     fut.set_result("deny")
+            for fut in self.questions.values():
+                if not fut.done():
+                    fut.set_result("")
             if self.task and not self.task.done():
                 self.task.cancel()
         elif kind == "approval":
             fut = self.approvals.get(str(data.get("id")))
             if fut and not fut.done():
                 fut.set_result(str(data.get("decision", "deny")))
+        elif kind == "answer":
+            fut = self.questions.get(str(data.get("id")))
+            if fut and not fut.done():
+                fut.set_result(str(data.get("answer", ""))[:1000])
         elif kind == "ping":
             await self.emit({"type": "pong"})
 

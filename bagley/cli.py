@@ -274,6 +274,15 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 always.add(tool.name)
             return answer.startswith(("y", "a"))
 
+        async def ask(question: str, options: list[str]) -> str | None:
+            print(S.warn(f"\n  {question}"))
+            for i, option in enumerate(options, 1):
+                print(S.dim(f"  {i}. {option}"))
+            answer = (await asyncio.to_thread(input, "  › ")).strip()
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                answer = options[int(answer) - 1]
+            return answer or None
+
         print(
             f"\n  {S.accent('◉')} {S.bold('Bagley')} {S.dim('· /new starts over · /exit quits · Ctrl+C stops a reply')}"
         )
@@ -293,7 +302,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
                     continue
                 print(f"\n{S.accent('bagley ›')} ", end="", flush=True)
                 task = asyncio.create_task(
-                    agent.run(RunRequest(text=text, conversation_id=cid), emit, approve)
+                    agent.run(RunRequest(text=text, conversation_id=cid, ask=ask), emit, approve)
                 )
                 try:
                     await asyncio.shield(task)

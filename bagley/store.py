@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -164,6 +165,33 @@ class Store:
                 (limit,),
             )
         return [dict(r) for r in rows]
+
+    def search_messages(
+        self, query: str, *, exclude: str | None = None, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        """Past user and assistant messages matching the most words of ``query``, newest first."""
+        words = [w for w in re.findall(r"\w{2,}", query.lower())][:8]
+        if not words:
+            return []
+        likes = []
+        for w in words:
+            escaped = w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            likes.append(f"%{escaped}%")
+        where = " OR ".join("lower(m.content) LIKE ? ESCAPE '\\'" for _ in likes)
+        rows = self._all(
+            "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at, c.title "
+            "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+            "WHERE c.deleted_at IS NULL AND m.role IN ('user', 'assistant') "
+            f"AND c.id != ? AND ({where}) ORDER BY m.id DESC LIMIT 300",
+            (exclude or "", *likes),
+        )
+        scored = []
+        for r in rows:
+            text = r["content"].lower()
+            score = sum(w in text for w in words)
+            scored.append((score, r["id"], dict(r)))
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        return [item for *_, item in scored[:limit]]
 
     def rename_conversation(self, cid: str, title: str) -> bool:
         title = " ".join(title.split())[:120] or "Untitled"

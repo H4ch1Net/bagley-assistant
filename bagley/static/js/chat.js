@@ -122,6 +122,13 @@ function toolExtras(card, detail, ui) {
     bar.append(revert);
     if (ui.reverted) done();
   }
+  if (ui.plan?.length) {
+    // Only the newest plan in a reply is shown (see .has-plan in the CSS).
+    card.classList.add("has-plan");
+    const glyph = { done: "circle-check", doing: "circle-dot", todo: "circle" };
+    card.insertBefore(el("ol", { class: "plan", "aria-label": "Plan" }, ...ui.plan.map((step) =>
+      el("li", { class: `plan-step ${step.status}` }, icon(glyph[step.status] || "circle", "icon-sm"), el("span", { text: step.text })))), detail);
+  }
   if (ui.images?.length) {
     const media = el("div", { class: "tool-media" }, ...ui.images.map((img) =>
       el("a", { href: img.url, target: "_blank", rel: "noopener", title: img.path }, el("img", { src: img.url, alt: img.path, loading: "lazy" })),
@@ -147,7 +154,7 @@ export function toolCard({ id, name, args, state: initial = "running", result, d
     el("pre", { text: JSON.stringify(args, null, 2) }),
     resultWrap,
   );
-  const card = el("div", { class: "tool-card", dataset: { id, state: initial } }, head, detail);
+  const card = el("div", { class: "tool-card", dataset: { id, state: initial, tool: name } }, head, detail);
   head.addEventListener("click", () => {
     const open = card.classList.toggle("open");
     head.setAttribute("aria-expanded", String(open));
@@ -228,6 +235,7 @@ export class Chat {
     on("tool.start", this.onToolStart);
     on("approval.request", this.onApproval);
     on("approval.result", this.onApprovalResult);
+    on("question", this.onQuestion);
     on("tool.end", this.onToolEnd);
     on("notice", this.onNotice);
     on("error", this.onError);
@@ -563,6 +571,37 @@ export class Chat {
     announce(`Bagley needs your approval to ${summary}.`);
   }
 
+  onQuestion(ev) {
+    if (!this.live) return;
+    const cards = [...this.live.cards.values()].reverse();
+    const card = cards.find((c) => c.card.dataset.tool === "ask_user" && c.card.dataset.state === "running");
+    const input = el("input", { class: "input", placeholder: ev.options.length ? "Or type an answer" : "Type your answer", "aria-label": "Your answer", maxlength: 1000 });
+    const reply = (text) => {
+      if (!text.trim()) return input.focus();
+      this.socket.send({ type: "answer", id: ev.id, answer: text.trim() });
+      box.querySelectorAll("button, input").forEach((n) => (n.disabled = true));
+    };
+    const form = el("form", { class: "inline question-form" }, input, el("button", { class: "btn btn-sm btn-primary", type: "submit" }, icon("send", "icon-sm"), "Answer"));
+    form.addEventListener("submit", (e) => { e.preventDefault(); reply(input.value); });
+    const box = el("div", { class: "question", role: "group", "aria-label": "Bagley is asking" },
+      el("p", {}, icon("message-circle-question", "icon-sm"), el("strong", { text: ev.question })),
+      ev.options.length ? el("div", { class: "question-options" }, ...ev.options.map((o) => el("button", { class: "btn btn-sm", type: "button", text: o, onclick: () => reply(o) }))) : null,
+      form,
+    );
+    if (card) {
+      card.card.append(box);
+      card.question = box;
+    } else {
+      this.closeSegment();
+      this.live.body.append(box);
+    }
+    this.follow();
+    const first = box.querySelector(".question-options .btn") || input;
+    const active = document.activeElement;
+    if (this.stick && (!active || active === document.body || thread().contains(active))) first.focus({ preventScroll: true });
+    announce(`Bagley asks: ${ev.question}`);
+  }
+
   onApprovalResult(ev) {
     const card = this.live?.cards.get(ev.id);
     if (!card) return;
@@ -573,6 +612,7 @@ export class Chat {
   onToolEnd(ev) {
     const card = this.live?.cards.get(ev.id);
     if (!card) return;
+    card.question?.remove();
     if (card.card.dataset.state === "denied") {
       card.set("denied", { result: ev.result });
       return;

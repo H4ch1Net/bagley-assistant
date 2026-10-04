@@ -52,6 +52,7 @@ class ToolContext:
     http: httpx.AsyncClient
     conversation_id: str | None = None
     runtime: Any = None  # bagley.runtime.Runtime, for tools that use shared services.
+    ask: Any = None  # async (question, options) -> answer | None, while someone can answer.
 
 
 @dataclass
@@ -298,6 +299,7 @@ class Registry:
 
 def build_registry(config: ServerConfig) -> Registry:
     from bagley.tools import (
+        agentic,
         automation,
         core,
         files,
@@ -310,7 +312,7 @@ def build_registry(config: ServerConfig) -> Registry:
     )
 
     registry = Registry()
-    for module in (core, web, files, knowledge, memory, skills, system, automation):
+    for module in (core, agentic, web, files, knowledge, memory, skills, system, automation):
         registry.add_module(module, "builtin")
     if config.enable_shell:
         registry.add_module(shell, "builtin")

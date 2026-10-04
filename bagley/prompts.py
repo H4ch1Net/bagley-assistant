@@ -88,6 +88,21 @@ def system_prompt(
                 f"\n- File tools work inside the workspace folder: {workspace}. Files the user "
                 "attaches are saved there under uploads/; read them with read_file."
             )
+        names = {t.name for t in tools}
+        if "update_plan" in names:
+            guide += (
+                "\n- For a task with three or more steps, call update_plan with a short plan first, "
+                "then update it as steps finish."
+            )
+        if "ask_user" in names:
+            guide += (
+                "\n- If the request is ambiguous and the choice matters, ask with ask_user instead "
+                "of guessing."
+            )
+        if "search_chats" in names:
+            guide += (
+                "\n- When the user refers to an earlier conversation, look it up with search_chats."
+            )
         if (
             knowledge
             and knowledge.get("files")

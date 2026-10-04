@@ -24,6 +24,7 @@ log = logging.getLogger("bagley.agent")
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 Approve = Callable[[ToolCall, Tool], Awaitable[bool]]
+Ask = Callable[[str, list[str]], Awaitable[str | None]]
 ToolMode = Literal["native", "prompt", "off"]
 
 RESULT_PREVIEW_CHARS = 4000
@@ -37,6 +38,7 @@ class RunRequest:
     tools: bool = True
     policy: UnattendedPolicy | None = None  # Set for runs nobody is watching.
     learn: bool = True  # Reflect afterwards and save skills (the learning loop).
+    ask: Ask | None = None  # How ask_user reaches the person; None when nobody can answer.
 
 
 @dataclass
@@ -309,13 +311,7 @@ class Agent:
                     break
                 while pending_calls:
                     await self._run_tool(
-                        cid,
-                        pending_calls[0],
-                        emit,
-                        approve,
-                        prefs.disabled_tools,
-                        req.policy,
-                        trace,
+                        cid, pending_calls[0], emit, approve, prefs.disabled_tools, req, trace
                     )
                     pending_calls.pop(0)
                 if index == prefs.max_steps - 1:
@@ -476,9 +472,10 @@ class Agent:
         emit: Emit,
         approve: Approve,
         disabled: list[str],
-        policy: UnattendedPolicy | None = None,
+        req: RunRequest | None = None,
         trace: list[dict[str, Any]] | None = None,
     ) -> None:
+        policy = req.policy if req else None
         tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
         if tool and tool.name in disabled:
             tool = None
@@ -518,7 +515,9 @@ class Agent:
                 await emit({"type": "status", "state": "tool", "tool": call.name})
                 started = time.monotonic()
                 try:
-                    result, ui = await tool.run(call.arguments, self.rt.tool_context(cid))
+                    ctx = self.rt.tool_context(cid)
+                    ctx.ask = req.ask if req else None
+                    result, ui = await tool.run(call.arguments, ctx)
                     ok = True
                     if policy:
                         policy.observe(tool, result)

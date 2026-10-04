@@ -294,3 +294,23 @@ def test_workspace_images_are_served_safely(client, tmp_path):
     assert ok.status_code == 200 and ok.headers["content-type"] == "image/png"
     for bad in ("notes.md", "../outside.png", "/../outside.png", "charts/missing.png", "."):
         assert client.get("/api/workspace/raw", params={"path": bad}).status_code == 404
+
+
+def test_questions_round_trip_over_the_socket(client):
+    client.mock.script = [
+        Reply(
+            tool_calls=[("ask_user", {"question": "Tea or coffee?", "options": ["Tea", "Coffee"]})]
+        ),
+        Reply(text="Tea, noted."),
+    ]
+    with client.websocket_connect(WS) as ws:
+        ws.send_text(json.dumps({"type": "chat", "text": "make me a drink"}))
+        while (event := receive(ws))["type"] != "question":
+            pass
+        assert event["options"] == ["Tea", "Coffee"]
+        ws.send_text(json.dumps({"type": "answer", "id": event["id"], "answer": "Tea"}))
+        while (event := receive(ws))["type"] != "tool.end":
+            pass
+        assert event["result"] == "The user answered: Tea"
+        while receive(ws)["type"] != "run.end":
+            pass
