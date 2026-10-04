@@ -2,9 +2,12 @@
 
 After a task that took several tool calls, Bagley looks back at what it did, in the background
 and on the same local model. It saves the procedure as a skill (or improves a skill it followed)
-and keeps any lasting facts the user stated about themselves. It sees the user's words, the
-tool calls and its own answer, never the tool results, so text from a web page can't plant a
-skill or a memory.
+and keeps any lasting facts the user stated about themselves.
+
+It sees the user's words, the tool calls and its own answer, never the tool results. Arguments
+and the answer can still echo something a web page said, so when a run read web content, used
+helpers, past chats or plugin tools, a learned skill is only a draft until the user approves it,
+and a fact is kept only when most of its words are the user's own.
 """
 
 from __future__ import annotations
@@ -23,6 +26,12 @@ if TYPE_CHECKING:
 log = logging.getLogger("bagley.learning")
 
 LEARN_AFTER = 5  # Tool calls in one reply before Bagley reflects on it.
+UNTRUSTED_TOOLS = {"web_search", "fetch_webpage", "delegate_task", "search_chats"}
+STOPWORDS = {"the", "user", "user's", "users", "their", "they", "them", "with", "and", "for",
+    "that", "this", "from", "about", "into", "has", "have", "had", "are", "was", "were", "is",
+    "be", "been", "being", "who", "what", "when", "where", "which", "will", "would", "should",
+    "could", "also", "very", "just", "like", "some", "any", "all", "not", "but", "its", "it's",
+    "your", "you", "our"}  # fmt: skip
 
 PROMPT = """You just finished a task for the user. Decide whether anything is worth keeping for next time.
 
@@ -79,8 +88,10 @@ async def reflect(
     request: str,
     trace: list[dict[str, Any]],
     answer: str,
+    trusted: bool = True,
 ) -> dict[str, Any]:
-    """Look back at one finished reply. Returns what was learned."""
+    """Look back at one finished reply. Returns what was learned. With ``trusted`` False a new or
+    improved skill is saved as a draft for the user to review."""
     used = [
         str(c["arguments"].get("name", "")).strip().lower()
         for c in trace
@@ -112,7 +123,7 @@ async def reflect(
     )
     parser = StreamParser(parse_tools=False)
     data = _json(parser.feed(raw).text + parser.finish().text)
-    learned: dict[str, Any] = {"skill": None, "improved": False, "facts": []}
+    learned: dict[str, Any] = {"skill": None, "improved": False, "facts": [], "draft": False}
 
     skill = data.get("skill")
     if isinstance(skill, dict) and all(
@@ -124,10 +135,15 @@ async def reflect(
             # Only rewrite an existing skill if this run actually followed it.
             if existing is None or name in used:
                 saved = rt.skills.save(
-                    name, skill["description"], skill["instructions"], source="learned"
+                    name,
+                    skill["description"],
+                    skill["instructions"],
+                    source="learned",
+                    pending=not trusted,
                 )
                 learned["skill"] = saved.summary()
                 learned["improved"] = existing is not None
+                learned["draft"] = not trusted
         except SkillError as exc:
             log.debug("Skipped a learned skill: %s", exc)
 
@@ -142,17 +158,33 @@ async def reflect(
 
     if learned["skill"]:
         s = learned["skill"]
-        title = "Improved a skill" if learned["improved"] else "Learned a new skill"
         await rt.broadcast({"type": "skills.changed"})
-        await rt.notify(title, f"{s['name']}: {s['description']}")
+        if learned["draft"]:
+            await rt.notify(
+                "A skill is waiting for review",
+                f"{s['name']}: {s['description']} Approve it in Settings → Skills.",
+            )
+        else:
+            title = "Improved a skill" if learned["improved"] else "Learned a new skill"
+            await rt.notify(title, f"{s['name']}: {s['description']}")
     if learned["facts"]:
         await rt.broadcast({"type": "memories.changed"})
         await rt.notify("Remembered", "; ".join(learned["facts"]))
     return learned
 
 
+def _stem(word: str) -> str:
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
 def _stated(fact: str, request: str) -> bool:
-    """A fact must share some words with what the user wrote, so it can't come from elsewhere."""
-    words = {w for w in re.findall(r"\w{4,}", fact.lower())}
-    said = set(re.findall(r"\w{4,}", request.lower()))
-    return bool(words & said)
+    """Most of a fact's words must be the user's own, so it can't come from somewhere else."""
+    words = [_stem(w) for w in re.findall(r"[^\W\d_]{3,}", fact.lower()) if w not in STOPWORDS]
+    said = [_stem(w) for w in re.findall(r"[^\W\d_]{3,}", request.lower())]
+    if not words:
+        return False
+    hits = sum(any(w.startswith(s) or s.startswith(w) for s in said) for w in words)
+    return hits / len(words) >= 0.6

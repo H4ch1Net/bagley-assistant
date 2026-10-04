@@ -182,7 +182,7 @@ Automations run while Bagley is running. A run that was missed while it was off 
 
 A skill is a folder with a `SKILL.md` file: front matter with a `name` and a one-line `description`, then Markdown steps. Bagley lists every skill in its instructions and reads the full text with `read_skill` when one matches the request. Four ship with it (`research-a-question`, `morning-briefing`, `analyze-a-spreadsheet`, `tidy-a-folder`). Yours live in `~/.bagley/skills/`, where skills written for other agents in the same format also work.
 
-Learning happens after a reply that took five or more tool calls. Bagley looks back at your request, the tools it called and its answer, then saves a new skill, improves the skill it followed, or remembers a fact you stated about yourself. It never sees tool results while doing this, so a web page can't plant a skill or a memory. Each time it learns something you get a notification, and everything it saved is listed in **Settings → Skills** and **Settings → Memory**, where you can edit or delete it, or switch learning off.
+Learning happens after a reply that took five or more tool calls. Bagley looks back at your request, the tools it called and its answer, then saves a new skill, improves the skill it followed, or remembers a fact you stated about yourself. It never sees tool results while doing this. When the task read web pages, used helpers or past chats, or called plugin tools, the skill is only a draft until you approve it in **Settings → Skills**, and a fact is kept only when most of its words are your own. Each time it learns something you get a notification, and everything it saved is listed in **Settings → Skills** and **Settings → Memory**, where you can edit or delete it, or switch learning off.
 
 ### Telegram
 
@@ -322,9 +322,9 @@ Bagley can act on your behalf, so it is locked down by default:
 - File changes, `run_command`, `run_python`, new scheduled tasks and watchers, and untrusted MCP tools wait for your approval. Shell and Python access are off unless you enable them, and stopping a command ends everything it started.
 - Automations run without you watching. During those runs, tools that need approval are denied, and memories, automations and folders can't be changed. Once a run has read web content it can't read your files or notes, and it can only open pages from its search results. Watcher instructions run with no tools at all. Text on a web page therefore can't send your data anywhere.
 - Every file change is journaled with the previous version, so a bad edit can be reverted.
-- Helper agents run under the same rules as automations, can't ask you anything, and can't start helpers of their own.
-- The learning loop only sees your words, the names and arguments of the tools it called, and its own answer, never tool results. Saving a skill from a chat asks first.
-- Telegram serves only chats paired with a one-time code. Taps from any other chat are ignored, and the bot token is stored like the API key and never sent to the browser.
+- Helper agents run under the same rules as automations, can't ask you anything, and can't start helpers of their own. A helper started by an automation that has already read web content inherits those limits.
+- The learning loop only sees your words, the names and arguments of the tools it called, and its own answer, never tool results. Skills learned from tasks that touched web content wait for your approval, and saving a skill from a chat asks first.
+- Telegram serves only chats paired with a one-time code, and a chat that sends five wrong codes is ignored for an hour. Approvals show the full arguments of the action. Taps from any other chat are ignored, and the bot token is stored like the API key, never sent to the browser and kept out of the logs.
 - A saved API key is cleared when the server URL changes, and a key set through `BAGLEY_API_KEY` locks the server URL, so the key only goes where you configured it.
 - The UI loads nothing from the internet and sends a strict Content-Security-Policy. Model output is sanitized: no images, frames or forms, so a prompt-injected page can't make the browser leak data.
 

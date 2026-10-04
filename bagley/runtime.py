@@ -76,8 +76,8 @@ class Runtime:
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self.scheduler.stop()  # Before Telegram, which a finishing task may still notify.
         await self.telegram.aclose()
-        await self.scheduler.stop()
         await self.knowledge.stop()
         self.knowledge.close()
         await self.mcp.stop()

@@ -38,6 +38,14 @@ class UnattendedPolicy:
     def for_prompt(cls, prompt: str) -> UnattendedPolicy:
         return cls(urls={u.rstrip(".,;") for u in URL.findall(prompt)})
 
+    def for_helper(self, prompt: str) -> UnattendedPolicy:
+        """A helper started from this run carries its state. Once web content has been read, the
+        helper's task text may have been steered by it, so addresses in it aren't trusted."""
+        helper = UnattendedPolicy(web_content=self.web_content, urls=set(self.urls))
+        if not self.web_content:
+            helper.urls |= UnattendedPolicy.for_prompt(prompt).urls
+        return helper
+
     def check(self, tool: Tool, args: dict[str, Any]) -> str | None:
         """Why ``tool`` may not run now, or None if it may."""
         if tool.risk == "confirm":

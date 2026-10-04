@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from bagley.learning import LEARN_AFTER, reflect
+from bagley.learning import LEARN_AFTER, UNTRUSTED_TOOLS, reflect
 from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError
 from bagley.llm.textparse import StreamParser
 from bagley.policy import UnattendedPolicy
@@ -354,13 +354,21 @@ class Agent:
         # Learn from complex tasks the user was present for; never from unattended runs.
         learn = prefs.learning and req.policy is None and req.learn
         if learn and model and not (stopped or failed) and len(trace) >= LEARN_AFTER:
-            rt.spawn(self._learn(model, first_text, trace, answer))
+            trusted = not any(
+                c["name"] in UNTRUSTED_TOOLS
+                or (rt.registry.get(c["name"]) is None)
+                or rt.registry.get(c["name"]).source != "builtin"
+                for c in trace
+            )
+            rt.spawn(self._learn(model, first_text, trace, answer, trusted))
 
     async def _learn(
-        self, model: str, request: str, trace: list[dict[str, Any]], answer: str
+        self, model: str, request: str, trace: list[dict[str, Any]], answer: str, trusted: bool
     ) -> None:
         try:
-            await reflect(self.rt, model=model, request=request, trace=trace, answer=answer)
+            await reflect(
+                self.rt, model=model, request=request, trace=trace, answer=answer, trusted=trusted
+            )
         except Exception as exc:  # Learning is a bonus; never surface failures.
             log.debug("Reflection failed: %s", exc)
 
@@ -518,6 +526,7 @@ class Agent:
                 try:
                     ctx = self.rt.tool_context(cid)
                     ctx.ask = req.ask if req else None
+                    ctx.policy = policy
                     result, ui = await tool.run(call.arguments, ctx)
                     ok = True
                     if policy:

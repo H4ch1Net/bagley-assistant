@@ -444,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, str(getattr(args, "log_level", "warning")).upper(), logging.WARNING),
         format="%(levelname)s %(name)s: %(message)s",
     )
+    # httpx logs full request URLs at INFO, and Telegram's include the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     command = args.command or "serve"
     handlers = {"serve": cmd_serve, "chat": cmd_chat, "ask": cmd_ask, "doctor": cmd_doctor}
     return handlers[command](args)

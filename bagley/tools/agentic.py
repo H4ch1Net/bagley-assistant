@@ -140,7 +140,7 @@ async def delegate_task(
         raise ToolError("Give at least one subtask.")
     if len(todo) > MAX_SUBTASKS:
         raise ToolError(f"At most {MAX_SUBTASKS} subtasks at a time.")
-    results = await run_subtasks(ctx.runtime, ctx.conversation_id, todo, context)
+    results = await run_subtasks(ctx.runtime, ctx.conversation_id, todo, context, ctx.policy)
     return ToolOutput(
         {"results": [{"task": r["task"], "answer": r["answer"]} for r in results]},
         ui={

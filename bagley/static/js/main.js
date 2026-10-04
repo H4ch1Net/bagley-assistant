@@ -547,8 +547,11 @@ function renderStats() {
 }
 
 function skillText() {
+  const drafts = state.skills.filter((s) => s.source === "pending").length;
   const learned = state.skills.filter((s) => s.source === "learned").length;
-  return learned ? `${state.skills.length} · ${learned} learned` : `${state.skills.length}`;
+  const total = state.skills.length - drafts;
+  if (drafts) return `${total} · ${drafts} to review`;
+  return learned ? `${total} · ${learned} learned` : `${total}`;
 }
 
 function automationText() {

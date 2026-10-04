@@ -567,8 +567,9 @@ export class Settings {
 
   renderSkillList() {
     if (!this.skillBox?.isConnected) return;
-    const label = { learned: "learned", builtin: "built-in", user: "yours" };
+    const label = { learned: "learned", builtin: "built-in", user: "yours", pending: "needs review" };
     keepFocus(this.skillBox, () => this.skillBox.replaceChildren(...(state.skills.length ? state.skills.map((sk) => {
+      if (sk.source === "pending") return this.draftRow(sk);
       const edit = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: sk.editable ? "Edit" : "Customize", "aria-label": `Edit ${sk.name}`, onclick: () => this.editSkill(sk) }, icon("pencil", "icon-sm"));
       const remove = sk.editable ? el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Delete", "aria-label": `Delete ${sk.name}` }, icon("trash-2", "icon-sm")) : null;
       remove?.addEventListener("click", async () => {
@@ -592,6 +593,33 @@ export class Settings {
         el("div", { class: "inline", style: "gap:2px" }, edit, remove),
       );
     }) : [el("div", { class: "list-empty", text: "No skills yet." })])));
+  }
+
+  /** A skill learned from a task that read web content: shown in full, used only once approved. */
+  draftRow(sk) {
+    const act = async (request, done) => {
+      try {
+        await request();
+        toast(done);
+      } catch (err) {
+        toast(err.message, { type: "error" });
+      }
+      await this.onSkillsChanged();
+    };
+    const name = encodeURIComponent(sk.name);
+    return el("div", { class: "list-item skill-row draft", dataset: { name: sk.name } },
+      el("span", { class: "tool-icon" }, icon("sparkles", "icon-sm")),
+      el("div", { class: "grow" },
+        el("div", { class: "name" }, sk.name, el("span", { class: "badge badge-warn", text: "needs review" })),
+        el("div", { class: "desc", text: sk.description }),
+        el("details", { class: "draft-steps" }, el("summary", { text: "Show the steps" }), el("pre", { text: sk.instructions })),
+        el("div", { class: "help", text: "Drafted after a task that read web content. Bagley won't use it until you approve it." }),
+      ),
+      el("div", { class: "inline", style: "gap:4px" },
+        el("button", { class: "btn btn-sm btn-primary", type: "button", "aria-label": `Approve ${sk.name}`, onclick: () => act(() => api.post(`/api/skills/${name}/approve`), `Approved ${sk.name}`) }, icon("check", "icon-sm"), "Approve"),
+        el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Discard", "aria-label": `Discard ${sk.name}`, onclick: () => act(() => api.del(`/api/skills/${name}/draft`), `Discarded ${sk.name}`) }, icon("trash-2", "icon-sm")),
+      ),
+    );
   }
 
   async editSkill(sk) {

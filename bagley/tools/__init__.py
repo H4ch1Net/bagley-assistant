@@ -53,6 +53,7 @@ class ToolContext:
     conversation_id: str | None = None
     runtime: Any = None  # bagley.runtime.Runtime, for tools that use shared services.
     ask: Any = None  # async (question, options) -> answer | None, while someone can answer.
+    policy: Any = None  # bagley.policy.UnattendedPolicy of the current run, if nobody watches.
 
 
 @dataclass

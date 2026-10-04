@@ -27,7 +27,11 @@ BRIEF = (
 
 
 async def run_subtasks(
-    rt: Runtime, parent_id: str | None, tasks: list[str], context: str = ""
+    rt: Runtime,
+    parent_id: str | None,
+    tasks: list[str],
+    context: str = "",
+    parent_policy: Any = None,
 ) -> list[dict[str, Any]]:
     from bagley.agent import Agent, RunRequest  # Late import: the agent imports the tools.
     from bagley.policy import UnattendedPolicy
@@ -49,7 +53,11 @@ async def run_subtasks(
         request = RunRequest(
             text=prompt,
             conversation_id=conv["id"],
-            policy=UnattendedPolicy.for_prompt(prompt),
+            policy=(
+                parent_policy.for_helper(prompt)
+                if parent_policy is not None
+                else UnattendedPolicy.for_prompt(prompt)
+            ),
             learn=False,
             exclude=frozenset({"delegate_task", "ask_user"}),
         )

@@ -701,7 +701,24 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     @app.get("/api/skills")
     async def list_skills() -> list[dict[str, Any]]:
-        return rt().skills.index(limit=500)  # Yours and learned first, newest first.
+        # Drafts waiting for review first, then yours and learned (newest first), then built-in.
+        drafts = [s.summary() for s in rt().skills.pending()]
+        return drafts + rt().skills.index(limit=500)
+
+    @app.post("/api/skills/{name}/approve")
+    async def approve_skill(name: str) -> dict[str, Any]:
+        skill = rt().skills.approve(name)
+        if skill is None:
+            raise HTTPException(404, "No draft skill with that name.")
+        await rt().broadcast({"type": "skills.changed"})
+        return skill.summary()
+
+    @app.delete("/api/skills/{name}/draft", status_code=204)
+    async def discard_skill(name: str) -> Response:
+        if not rt().skills.discard(name):
+            raise HTTPException(404, "No draft skill with that name.")
+        await rt().broadcast({"type": "skills.changed"})
+        return Response(status_code=204)
 
     @app.get("/api/skills/{name}")
     async def get_skill(name: str) -> dict[str, Any]:

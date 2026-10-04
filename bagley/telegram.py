@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import json
 import logging
 import re
 import secrets
@@ -31,7 +32,9 @@ log = logging.getLogger("bagley.telegram")
 API = "https://api.telegram.org"
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 CODE_TTL = 15 * 60
-MAX_ATTEMPTS = 5  # Wrong pairing codes per chat before it is ignored.
+MAX_ATTEMPTS = 5  # Wrong pairing codes per chat before it is ignored for LOCKOUT seconds.
+LOCKOUT = 3600
+CODE_LENGTH = 8
 WAIT = 600  # Seconds an approval or question waits for a tap.
 LIMIT = 4000  # Telegram allows 4096 characters per message.
 HELP = (
@@ -88,7 +91,7 @@ class TelegramGateway:
         self.bot = ""
         self.code = ""
         self.code_expires = 0.0
-        self.attempts: dict[int, int] = {}
+        self.attempts: dict[int, tuple[int, float]] = {}  # chat -> (wrong codes, first one)
         self.runs: dict[int, asyncio.Task[None]] = {}
         self.pending: dict[str, asyncio.Future[str]] = {}  # Button taps by key.
         self.replies: dict[int, asyncio.Future[str]] = {}  # Typed answers to ask_user.
@@ -105,7 +108,10 @@ class TelegramGateway:
     def start(self) -> None:
         if self._task and not self._task.done():
             return
-        self._token = self.token()
+        token = self.token()
+        if token != self._token:
+            self._offset = 0  # Update ids are per bot; a new bot starts its own count.
+        self._token = token
         if not self._token:
             self.state, self.error, self.bot = "off", "", ""
             return
@@ -120,6 +126,7 @@ class TelegramGateway:
                     await task
         self._task = None
         self.runs.clear()
+        self.state = "off"
 
     async def restart(self) -> None:
         await self.stop()
@@ -270,9 +277,8 @@ class TelegramGateway:
 
     def new_code(self) -> str:
         self.version += 1
-        raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+        raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
         self.code, self.code_expires = f"{raw[:4]}-{raw[4:]}", time.time() + CODE_TTL
-        self.attempts.clear()
         return self.code
 
     def current_code(self) -> str:
@@ -284,8 +290,9 @@ class TelegramGateway:
         # "/pair CODE", "/start CODE" (from the t.me link in Settings) or just the code.
         upper = text.upper()
         given = re.sub(r"[^A-Z0-9]", "", upper.removeprefix("/PAIR").removeprefix("/START"))
-        if self.attempts.get(chat, 0) >= MAX_ATTEMPTS:
-            return
+        wrong, since = self.attempts.get(chat, (0, 0.0))
+        if wrong >= MAX_ATTEMPTS and time.time() - since < LOCKOUT:
+            return  # Too many wrong codes from this chat; stay silent for a while.
         expected = re.sub(r"[^A-Z0-9]", "", self.code)
         ok = bool(expected) and time.time() < self.code_expires
         if ok and secrets.compare_digest(given, expected):
@@ -297,8 +304,11 @@ class TelegramGateway:
             await self.changed()
             await self.send(chat, f"Paired. Hi {name}, I'm Bagley. {HELP}")
             return
-        if upper.startswith("/PAIR") or (upper.startswith("/START") and given):
-            self.attempts[chat] = self.attempts.get(chat, 0) + 1
+        if len(given) == CODE_LENGTH or upper.startswith("/PAIR"):
+            # Every guess shaped like a code counts, with or without /pair.
+            if wrong >= MAX_ATTEMPTS:
+                wrong = 0  # The lockout has passed.
+            self.attempts[chat] = (wrong + 1, since if wrong else time.time())
             await self.send(chat, "That code didn't match. Check Settings → Telegram.")
         else:
             await self.send(
@@ -371,10 +381,18 @@ class TelegramGateway:
                 await self.send(chat, f"⚠ {event['message']}{hint}")
 
         async def approve(call: ToolCall, tool: Tool) -> bool:
-            args = ", ".join(f"{k}={str(v)[:80]}" for k, v in call.arguments.items())
+            # Show the arguments in full: what is approved is exactly what is shown.
+            args = json.dumps(call.arguments, ensure_ascii=False, indent=1)
+            if len(args) > 3000:
+                await self.send(
+                    chat,
+                    f"Declined **{tool.name}**: its {len(args):,} characters of arguments are too "
+                    "long to review here. Ask again from the app to see them in full.",
+                )
+                return False
             answer = await self._buttons(
                 chat,
-                f"Allow **{tool.name}**?\n`{args[:600]}`",
+                f"Allow **{tool.name}**?\n```\n{args}\n```",
                 [("Allow", "allow"), ("Deny", "deny")],
             )
             return answer == "allow"
@@ -457,8 +475,10 @@ class TelegramGateway:
         if self.state != "ok" or not prefs.telegram_notify or not conversation_id:
             return
         for c in self.chats():
-            with contextlib.suppress(TelegramError):
+            try:
                 await self.send(int(c["id"]), f"**{title}**\n{body}" if body else f"**{title}**")
+            except Exception as exc:  # Never let a phone notification break the caller.
+                log.warning("Couldn't notify Telegram: %s", exc)
 
     # Status -----------------------------------------------------------------------------------
 

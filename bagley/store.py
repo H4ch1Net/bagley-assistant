@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 3
+SEARCH_STOPWORDS = {"the", "and", "for", "are", "was", "were", "what", "did", "does", "about",
+    "that", "this", "with", "from", "have", "has", "had", "you", "your", "our", "we", "me", "my",
+    "it", "its", "is", "be", "to", "of", "in", "on", "at", "an", "or", "as", "by", "do", "so"}  # fmt: skip
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -97,6 +100,9 @@ class Store:
         self._lock = threading.RLock()
         with self._lock:
             self._db.execute("PRAGMA foreign_keys = ON")
+            self._db.create_function(
+                "ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True
+            )
             if self.path != ":memory:":
                 self._db.execute("PRAGMA journal_mode = WAL")
             self._db.executescript(SCHEMA)
@@ -184,29 +190,29 @@ class Store:
         self, query: str, *, exclude: str | None = None, limit: int = 8
     ) -> list[dict[str, Any]]:
         """Past user and assistant messages matching the most words of ``query``, newest first."""
-        words = [w for w in re.findall(r"\w{2,}", query.lower())][:8]
+        found = re.findall(r"\w{2,}", query.lower())
+        words = [w for w in found if w not in SEARCH_STOPWORDS][:8] or found[:8]
         if not words:
             return []
         likes = []
         for w in words:
             escaped = w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             likes.append(f"%{escaped}%")
-        where = " OR ".join("lower(m.content) LIKE ? ESCAPE '\\'" for _ in likes)
+        # ulower is Python's str.lower, so "Москве" matches "москве" (SQLite's lower is ASCII only).
+        score = " + ".join("(ulower(m.content) LIKE ? ESCAPE '\\')" for _ in likes)
         rows = self._all(
-            "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at, c.title "
+            "SELECT * FROM (SELECT m.id, m.conversation_id, m.role, m.content, m.created_at, "
+            f"c.title, ({score}) AS score "
             "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
             "WHERE c.deleted_at IS NULL AND c.parent_id IS NULL "
-            "AND m.role IN ('user', 'assistant') "
-            f"AND c.id != ? AND ({where}) ORDER BY m.id DESC LIMIT 300",
-            (exclude or "", *likes),
+            "AND m.role IN ('user', 'assistant') AND c.id != ?) "
+            "WHERE score > 0 ORDER BY score DESC, id DESC LIMIT ?",
+            (*likes, exclude or "", limit),
         )
-        scored = []
-        for r in rows:
-            text = r["content"].lower()
-            score = sum(w in text for w in words)
-            scored.append((score, r["id"], dict(r)))
-        scored.sort(key=lambda x: (-x[0], -x[1]))
-        return [item for *_, item in scored[:limit]]
+        hits = [dict(r) for r in rows]
+        for hit in hits:
+            del hit["score"]
+        return hits
 
     def rename_conversation(self, cid: str, title: str) -> bool:
         title = " ".join(title.split())[:120] or "Untitled"
@@ -222,20 +228,31 @@ class Store:
         self._exec("UPDATE conversations SET updated_at = ? WHERE id = ?", (_now(), cid))
 
     def delete_conversation(self, cid: str) -> bool:
-        cur = self._exec(
-            "UPDATE conversations SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
-            (_now(), cid),
+        """Move a chat, and the subtask chats it started, to the trash."""
+        if not self.get_conversation(cid):
+            return False
+        self._exec(
+            "UPDATE conversations SET deleted_at = ? "
+            "WHERE (id = ? OR parent_id = ?) AND deleted_at IS NULL",
+            (_now(), cid, cid),
         )
-        return cur.rowcount > 0
+        return True
 
     def restore_conversation(self, cid: str) -> bool:
-        cur = self._exec("UPDATE conversations SET deleted_at = NULL WHERE id = ?", (cid,))
+        cur = self._exec(
+            "UPDATE conversations SET deleted_at = NULL WHERE id = ? OR parent_id = ?", (cid, cid)
+        )
         return cur.rowcount > 0
 
     def purge_trash(self, older_than: float = TRASH_RETENTION_SECONDS) -> None:
         self._exec(
             "DELETE FROM conversations WHERE deleted_at IS NOT NULL AND deleted_at < ?",
             (_now() - older_than,),
+        )
+        # Subtask chats whose parent is gone for good.
+        self._exec(
+            "DELETE FROM conversations WHERE parent_id IS NOT NULL "
+            "AND parent_id NOT IN (SELECT id FROM conversations)"
         )
 
     # Messages -----------------------------------------------------------------------------

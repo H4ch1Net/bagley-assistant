@@ -33,17 +33,20 @@ class Skill:
     description: str
     body: str
     path: Path
-    source: str  # builtin | learned | user
+    source: str  # builtin | learned | user | pending (learned, waiting for the user's review)
     updated: float
 
     def summary(self) -> dict[str, Any]:
-        return {
+        info = {
             "name": self.name,
             "description": self.description,
             "source": self.source,
             "updated": self.updated,
-            "editable": self.source != "builtin",
+            "editable": self.source not in ("builtin", "pending"),
         }
+        if self.source == "pending":
+            info["instructions"] = self.body
+        return info
 
     def text(self) -> str:
         return render(self.name, self.description, self.body, self.source)
@@ -82,6 +85,7 @@ class SkillStore:
     def __init__(self, root: Path, builtin: Path | None = BUILTIN_DIR) -> None:
         self.root = root
         self.builtin = builtin
+        self.drafts = root / ".pending"  # Learned from untrusted content; not used until approved.
 
     def _load(self, folder: Path, default_source: str) -> Skill | None:
         path = folder / "SKILL.md"
@@ -121,7 +125,43 @@ class SkillStore:
         key = name.strip().lower()
         return next((s for s in self.all() if s.name == key), None)
 
-    def save(self, name: str, description: str, body: str, *, source: str = "user") -> Skill:
+    def pending(self) -> list[Skill]:
+        if not self.drafts.is_dir():
+            return []
+        found = [self._load(f, "user") for f in sorted(self.drafts.iterdir()) if f.is_dir()]
+        for skill in found:
+            if skill:
+                skill.source = "pending"
+        return [s for s in found if s]
+
+    def get_pending(self, name: str) -> Skill | None:
+        key = name.strip().lower()
+        return next((s for s in self.pending() if s.name == key), None)
+
+    def approve(self, name: str) -> Skill | None:
+        draft = self.get_pending(name)
+        if draft is None:
+            return None
+        saved = self.save(draft.name, draft.description, draft.body, source="learned")
+        shutil.rmtree(draft.path.parent, ignore_errors=True)
+        return saved
+
+    def discard(self, name: str) -> bool:
+        draft = self.get_pending(name)
+        if draft is None:
+            return False
+        shutil.rmtree(draft.path.parent, ignore_errors=True)
+        return True
+
+    def save(
+        self,
+        name: str,
+        description: str,
+        body: str,
+        *,
+        source: str = "user",
+        pending: bool = False,
+    ) -> Skill:
         key = slug(name)
         description = " ".join(description.split())
         if not description:
@@ -132,12 +172,14 @@ class SkillStore:
             raise SkillError("The skill needs instructions.")
         if len(body) > MAX_BODY:
             raise SkillError(f"Keep the instructions under {MAX_BODY:,} characters.")
-        folder = self.root / key
+        folder = (self.drafts if pending else self.root) / key
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / "SKILL.md"
         path.write_text(render(key, description, body, source), encoding="utf-8")
         skill = self._load(folder, "user")
         assert skill
+        if pending:
+            skill.source = "pending"
         return skill
 
     def delete(self, name: str) -> bool:
