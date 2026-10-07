@@ -1,16 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <radialGradient id="b" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#27d3ee" stop-opacity=".95"/>
-      <stop offset=".6" stop-color="#27d3ee" stop-opacity=".45"/>
-      <stop offset="1" stop-color="#27d3ee" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect x="1" y="1" width="62" height="62" rx="15" fill="#0b0e13" stroke="#27d3ee" stroke-opacity=".4" stroke-width="2"/>
-  <circle cx="27" cy="28" r="13" fill="url(#b)"/>
-  <circle cx="45" cy="43" r="6" fill="url(#b)"/>
-  <path d="M27 28 45 43" stroke="#27d3ee" stroke-opacity=".6" stroke-width="2"/>
-  <path d="M14 21v-7h7M33 14h7v7M40 35v7h-7M21 42h-7v-7" fill="none" stroke="#27d3ee" stroke-width="3" stroke-linecap="round"/>
-  <rect x="39.5" y="37.5" width="11" height="11" fill="none" stroke="#e8eef5" stroke-opacity=".6" stroke-width="1.5"/>
-  <path d="M24 28h6M27 25v6" stroke="#e8eef5" stroke-width="2" stroke-linecap="round"/>
+  <rect x="1" y="1" width="62" height="62" fill="#0e0e0e" stroke="#27d3ee" stroke-opacity=".4" stroke-width="2"/>
+  <path d="M8 16V8h8M48 8h8v8M56 48v8h-8M16 56H8v-8" fill="none" stroke="#e2e2e2" stroke-opacity=".7" stroke-width="2"/>
+  <path d="M28 29 45 17M28 29 47 44M28 29 16 45" stroke="#27d3ee" stroke-opacity=".7" stroke-width="2"/>
+  <path d="M45 17 47 44" stroke="#e2e2e2" stroke-opacity=".45" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <path d="M28 17 40 29 28 41 16 29Z" fill="#0e0e0e" stroke="#27d3ee" stroke-width="3"/>
+  <path d="M28 24 33 29 28 34 23 29Z" fill="#27d3ee"/>
+  <rect x="42" y="14" width="6" height="6" fill="#e2e2e2"/>
+  <rect x="44" y="41" width="6" height="6" fill="#e2e2e2"/>
+  <rect x="13" y="42" width="6" height="6" fill="#e2e2e2"/>
 </svg>
