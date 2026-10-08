@@ -399,18 +399,6 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     async def index() -> HTMLResponse:
         return HTMLResponse(index_html, headers=page_headers)
 
-    @app.get("/sw.js", include_in_schema=False)
-    async def service_worker() -> Response:
-        """The service worker lives at the root so it can control the whole app."""
-        path = STATIC_DIR / "sw.js"
-        if not path.is_file():
-            raise HTTPException(404, "Not found.")
-        return FileResponse(
-            path,
-            media_type="text/javascript",
-            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
-        )
-
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         info = await rt().health()
