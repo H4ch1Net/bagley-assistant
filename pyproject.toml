@@ -49,6 +49,11 @@ path = "bagley/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["bagley"]
 
+# The Quickshell overlay, Hyprland binds, mako style, zsh plugin and systemd units, for
+# `bagley desktop install` from a wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"desktop" = "bagley/desktop/files"
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

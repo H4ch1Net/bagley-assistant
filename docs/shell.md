@@ -16,17 +16,21 @@ show it with source `shell`.
 
 Requirements: zsh 5.3 or later, and `bagley` on your `PATH` (or set `BAGLEY_BIN`, see below).
 
-Add one line to `~/.zshrc`. Put it after your plugin manager and the Powerlevel10k setup:
+`bagley desktop install --only zsh` copies the plugin to `~/.local/share/bagley/zsh/`. Then add
+one line to `~/.zshrc`, after your plugin manager and the Powerlevel10k setup (or pass
+`--edit-configs` and it is added for you):
 
 ```zsh
-source /path/to/bagley/desktop/zsh/bagley.zsh
+source ~/.local/share/bagley/zsh/bagley.zsh
 ```
+
+From a checkout, `source /path/to/bagley/desktop/zsh/bagley.zsh` works too.
 
 As a plugin instead:
 
-- **oh-my-zsh**: `ln -s /path/to/bagley/desktop/zsh $ZSH_CUSTOM/plugins/bagley`, then add
+- **oh-my-zsh**: `ln -s ~/.local/share/bagley/zsh $ZSH_CUSTOM/plugins/bagley`, then add
   `bagley` to `plugins=(...)`.
-- **zinit**: `zinit snippet /path/to/bagley/desktop/zsh/bagley.zsh`.
+- **zinit**: `zinit snippet ~/.local/share/bagley/zsh/bagley.zsh`.
 
 The plugin only defines functions and hooks, so it adds nothing to shell startup time and prints
 nothing (Powerlevel10k's instant prompt stays quiet). It works with Powerlevel10k's transient

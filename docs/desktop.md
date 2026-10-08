@@ -29,7 +29,25 @@ On Arch: `pacman -S grim wl-clipboard libnotify mako` and `ollama pull qwen2.5vl
 
 Quickshell runs `bagley` from its `PATH`. When Hyprland starts Quickshell, `~/.local/bin` (pipx, `pip install --user`) may not be on it. Then set `BAGLEY_BIN` to the full path in the environment Quickshell starts with, for example `hl.env("BAGLEY_BIN", os.getenv("HOME") .. "/.local/bin/bagley")` in `hyprland.lua` (or `env = BAGLEY_BIN,/home/you/.local/bin/bagley` in hyprlang). `BAGLEY_URL` and `BAGLEY_TOKEN` work as for every other client, and right-clicking the segment opens `BAGLEY_URL` (default `http://127.0.0.1:8765`).
 
-## Install the QML
+## Install
+
+One command puts every desktop file in place: the QML next to your ctOS bar (or in
+`~/.config/quickshell/bagley` without one), the Hyprland binds, the mako style, the zsh plugin and
+the wake word listener's systemd unit. It prints the lines left to add to your own configs;
+`--edit-configs` adds them for you, once, between `# >>> bagley` markers, after saving a
+`.bagley-bak` copy.
+
+```sh
+bagley desktop install                  # everything; --only quickshell,hypr picks parts
+bagley desktop install --edit-configs   # also edit ~/.zshrc, hyprland.lua/conf and mako's config
+bagley desktop install --bar ~/ctOS/bar.qml --dry-run
+bagley desktop path                     # where the files are, inside the installed package
+```
+
+The ctOS bar folder in `/opt` belongs to root, so there it prints the `sudo cp` to run instead.
+The bar itself is yours to edit; the steps are below.
+
+## Install the QML by hand
 
 ### Into the ctOS bar
 
