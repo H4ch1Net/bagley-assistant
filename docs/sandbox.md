@@ -50,9 +50,7 @@ download failed. The tool card and the audit log carry a `BWRAP` marker.
 Linux with bubblewrap installed:
 
 ```sh
-sudo pacman -S bubblewrap        # Arch
-sudo apt install bubblewrap      # Debian, Ubuntu
-sudo dnf install bubblewrap      # Fedora
+sudo apt install bubblewrap
 ```
 
 Check that it works for your user:

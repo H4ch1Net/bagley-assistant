@@ -12,8 +12,9 @@ You get the result three ways:
 - **Every morning**: a "Morning briefing" automation posts the report into its own chat and
   notifies you on the desktop (mako) and your phone (ntfy).
 
-It is built for Arch Linux (systemd, pacman and an AUR helper, NetworkManager, Tailscale) and
-also works on Debian, Ubuntu and Fedora. On macOS and Windows most checks report `[N/A]`.
+It is built for Kali Linux (systemd, apt, NetworkManager, Tailscale) and works the same on
+Debian. On Ubuntu everything but the vulnerability check works; on other systems the update and
+vulnerability checks report `[N/A]`, and on macOS and Windows most checks do.
 
 ## What is checked
 
@@ -25,11 +26,11 @@ Each section reports `[OK]`, `[INFO]`, `[WARN]`, `[CRIT]` or `[N/A]` (with the r
 | `journal`  | Errors in the journal since boot, last 24 hours, grouped by unit, top 5 | 200+ errors, or a message at priority crit/alert/emerg | |
 | `disks`    | Space on each real filesystem; SMART health when `smartctl` works without root | 85% full | 95% full, or SMART says the disk is failing |
 | `battery`  | Capacity left versus new (`/sys/class/power_supply/BAT*`), cycles, charge | health under 80% | health under 60% |
-| `updates`  | Pending updates: `checkupdates` and `paru -Qua`/`yay -Qua`; `apt`, `dnf` elsewhere | security-relevant packages pending (linux, openssl, openssh, glibc, sudo, systemd, firefox, chromium...) | |
+| `updates`  | Pending updates (`apt list --upgradable`) and how old the package lists are | security-relevant packages pending (linux-image, openssl, openssh, libc6, sudo, systemd, firefox-esr, chromium...), or lists a week old | |
 | `network`  | Devices on the local network (`ip neigh`) and Tailscale peers | a device or peer that wasn't there before | |
 | `ports`    | Listening TCP and UDP sockets (`ss -tulpn`) | a newly opened port reachable from the network | a new port on every interface for SSH, Telnet, RDP, VNC, SMB, MySQL, PostgreSQL, Redis or MongoDB |
-| `ssh`      | Failed SSH logins in the last 24 hours, per source address and user | any attempt from the internet | 20+ failed attempts, or a successful login from an address that just failed |
-| `vulns`    | Known vulnerabilities in installed packages: `arch-audit`, else the Arch security tracker, else `debsecan` | Medium | High or Critical |
+| `ssh`      | Failed SSH logins in the last 24 hours, per source address and user (the journal, or `/var/log/auth.log`) | any attempt from the internet | 20+ failed attempts, or a successful login from an address that just failed |
+| `vulns`    | Vulnerabilities in installed packages that Debian has fixed (`debsecan`), and whether the fix is installable yet | medium urgency | high urgency |
 
 Notes:
 
@@ -41,42 +42,40 @@ Notes:
 - One SSH attempt shows up as several journal lines (`Invalid user`, `Failed password`, a PAM
   line); Bagley counts it once.
 - `[INFO]` counts as fine: the report's overall state is CRIT, WARN or OK.
+- Kali has no separate security suite, so security updates are recognised by package name.
+- `apt list --upgradable` only knows what the last `apt update` fetched. Bagley never runs
+  `apt update` (it needs root), so it tells you how old the lists are: `[INFO]` after two days,
+  `[WARN]` after a week.
 
 ## Requirements
 
 Everything is optional; a missing program makes its section `[N/A]` with a reason.
 
-On Arch:
-
 ```sh
-sudo pacman -S --needed pacman-contrib arch-audit smartmontools iproute2
+sudo apt install debsecan smartmontools iproute2
 ```
 
-- `pacman-contrib` gives `checkupdates`, which checks against fresh package databases without
-  touching the system's. Without it Bagley falls back to `pacman -Qu`, which only knows about
-  your last `pacman -Sy`.
-- `arch-audit` lists installed packages with known vulnerabilities. Without it Bagley downloads
-  the [Arch security tracker](https://security.archlinux.org/) data itself and compares it
-  with `pacman -Q` (using `vercmp`).
-- `paru` or `yay` adds AUR updates.
+- `debsecan` lists installed packages with known vulnerabilities, from the Debian security
+  tracker. Kali rolling follows Debian testing, which takes its fixes from unstable, so on Kali
+  Bagley compares with `sid` and shows only vulnerabilities that have a fix there
+  (`debsecan --suite sid --only-fixed`). Each one says whether the fixed version is already in
+  your repositories (`upgrade available: sudo apt full-upgrade`) or still on its way to Kali.
+  On Debian it compares with your release (`VERSION_CODENAME`).
 - `tailscale` adds tailnet peers to the network section.
 - `smartmontools` adds SMART health, but reading SMART data needs root. Bagley never asks for
   root: when `smartctl` is denied, the disk check just skips it.
 
-**Journal access.** The journal and SSH sections read the system journal. A normal user only
-sees their own logs unless they are in the `systemd-journal` group (`wheel` and `adm` work
-too on most systems):
+**Log access.** The journal and SSH sections read the system journal; the SSH section falls
+back to `/var/log/auth.log` when the journal can't be read and rsyslog is installed. Both need
+the `adm` group (Kali's default user is in it; `systemd-journal` works for the journal too):
 
 ```sh
-sudo usermod -aG systemd-journal "$USER"   # then log out and back in
+sudo usermod -aG adm "$USER"   # then log out and back in
 ```
 
 Without it, the journal section says `ONLY YOUR OWN JOURNAL IS READABLE` and the SSH section
-is `[N/A]` instead of claiming there were no failed logins.
-
-On Debian and Ubuntu, install `debsecan` for the vulnerability check; updates come from
-`apt list --upgradable` (packages from a `-security` suite are flagged). On Fedora updates come
-from `dnf check-update`.
+is `[N/A]` instead of claiming there were no failed logins. On Kali the SSH server is off by
+default (`sudo systemctl enable --now ssh` turns it on); the section reports whether it runs.
 
 The chat tools are registered on Linux only. Set `BAGLEY_WATCHDOG=1` to offer them on another
 system, or `BAGLEY_WATCHDOG=0` to turn them off.
@@ -220,10 +219,8 @@ The briefing's notification level follows the report: **critical** when anything
 
 - Every check runs locally, as your user, with fixed argument lists and timeouts. Nothing
   is installed or changed, and nothing runs as root.
-- The only request Bagley makes itself is downloading the public Arch security tracker list
-  (`https://security.archlinux.org/all.json`) when `arch-audit` isn't installed. Nothing about
-  your system is sent; the list is cached for six hours. `checkupdates`, `paru`/`yay` and
-  `arch-audit` contact your mirrors, the AUR and the tracker as they normally do.
+- Bagley makes no network requests of its own here. `debsecan` downloads the public Debian
+  security tracker data as it normally does; nothing about your system is sent.
 - Reports and baselines (MAC and IP addresses of devices, listening ports, peer names) are
   stored in Bagley's local database (`~/.bagley/bagley.db`, table `watchdog_baseline`) and in
   the briefing chat.
@@ -237,7 +234,7 @@ The briefing's notification level follows the report: **critical** when anything
 
 | Method and path | Body | Returns |
 |-----------------|------|---------|
-| `GET /api/watchdog/report?sections=a,b` | | a report (collected now; up to two minutes with `updates`) |
+| `GET /api/watchdog/report?sections=a,b` | | a report (collected now; up to two minutes with `vulns`) |
 | `GET /api/watchdog/last` | | the most recent full report, or 404 |
 | `GET /api/watchdog/sections` | | `[{id, title, description, baseline}]` |
 | `POST /api/watchdog/baseline/reset` | `{"sections": [...]}` (optional) | `{sections, removed}` |

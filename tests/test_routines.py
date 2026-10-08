@@ -248,7 +248,7 @@ async def test_scene_and_routine_tools_ask_once(rt, mock, recorder, desktop):
     assert recorder.asked == ["set_up_scene"]  # One approval for the whole scene.
     assert desktop.dispatched() == [
         ["exec", "[workspace 2 silent] kitty"],
-        ["exec", "[workspace 2 silent] zeditor"],
+        ["exec", "[workspace 2 silent] zed"],
         ["exec", "[workspace 2 silent] kitty --class ctos-term -e lazygit"],
         ["workspace", "2"],
     ]

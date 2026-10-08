@@ -86,7 +86,7 @@ MODES: dict[str, Mode] = {
             ),
             ("CVE", "What is CVE-2024-3094 and am I affected?"),
             ("Decode", "Decode and explain this: ZWNobyAiaGVsbG8i"),
-            ("Harden", "Give me a hardening checklist for an Arch Linux laptop with SSH enabled."),
+            ("Harden", "Give me a hardening checklist for my Kali laptop with SSH enabled."),
         ),
     ),
     "work": Mode(

@@ -18,7 +18,7 @@ bagley voices
 
 [Piper](https://github.com/rhasspy/piper) is a fast neural voice that runs on a laptop CPU.
 
-**Install.** On Arch, install `piper-tts-bin` from the AUR. It provides the `piper-tts` command. (Arch's own `piper` package is a gaming mouse configurator with the same command name; Bagley skips it.) Elsewhere, unpack a release from the Piper releases page and put `piper` on your `PATH`, or `pipx install piper-tts`.
+**Install.** `pipx install piper-tts` (`sudo apt install pipx` first if you don't have it), or unpack a release from the Piper releases page and put `piper` on your `PATH`. Don't use Kali's own `piper` package: it is a gaming mouse configurator with the same command name, and Bagley skips it.
 
 **Download a British voice.** Bagley is a dry, measured Englishman, so start with `en_GB-alan-medium`; `en_GB-northern_english_male-medium` is a warmer alternative. Each voice is an `.onnx` file plus its `.onnx.json`:
 
@@ -58,7 +58,16 @@ Bagley uses the `eleven_multilingual_v2` model, MP3 at 44.1 kHz and 128 kbps, wi
 
 ## Speech in with whisper.cpp (offline)
 
-**Install.** On Arch, install `whisper.cpp` from the AUR (or `whisper.cpp-cuda` / `whisper.cpp-vulkan` for a GPU). It provides `whisper-cli`. Elsewhere, build it from github.com/ggml-org/whisper.cpp (`cmake -B build && cmake --build build -j`) and copy `build/bin/whisper-cli` to `~/.local/bin`. Bagley tries `whisper-cli`, `whisper-cpp`, `whisper` and `main`, in that order.
+**Install.** Build it from github.com/ggml-org/whisper.cpp and copy `build/bin/whisper-cli` to `~/.local/bin`:
+
+```sh
+sudo apt install build-essential cmake git
+git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp
+cmake -B build && cmake --build build -j --config Release   # add -DGGML_VULKAN=ON for a GPU
+cp build/bin/whisper-cli ~/.local/bin/
+```
+
+Bagley tries `whisper-cli`, `whisper-cpp`, `whisper` and `main`, in that order.
 
 **Download a model:**
 
@@ -70,7 +79,7 @@ curl -LO https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bi
 
 `base.en` is plenty for commands. Use `small` if you also speak French to Bagley; the language is detected automatically. Bagley looks in `~/.bagley/models/`, `~/.local/share/whisper/`, `~/.local/share/whisper.cpp/` and `/usr/share/whisper.cpp*`, and prefers `base.en`.
 
-**Install ffmpeg** (`sudo pacman -S ffmpeg`). The browser records WebM or Ogg Opus, which ffmpeg converts to the 16 kHz WAV whisper.cpp reads. The desktop daemon records WAV directly and doesn't need it.
+**Install ffmpeg** (`sudo apt install ffmpeg`). The browser records WebM or Ogg Opus, which ffmpeg converts to the 16 kHz WAV whisper.cpp reads. The desktop daemon records WAV directly and doesn't need it.
 
 **Choose it.** Set speech input to `whisper`. Leave the model empty for the best one found, or give a name (`base.en`) or a path. Try it on a file:
 

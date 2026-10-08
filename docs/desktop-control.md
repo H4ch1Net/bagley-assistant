@@ -15,12 +15,12 @@ you don't want to confirm "louder").
 - The programs behind each tool. Bagley checks for each one and says clearly when it is missing;
   the rest keep working.
 
-| Program | Used for | Arch package |
+| Program | Used for | Kali package (`sudo apt install ...`) |
 |---|---|---|
 | `hyprctl` | windows, workspaces, opening apps | `hyprland` |
 | `playerctl` | media (Spotify, browsers, mpv...) | `playerctl` |
 | `wpctl` | volume | `wireplumber` |
-| `nmcli` | Wi-Fi | `networkmanager` |
+| `nmcli` | Wi-Fi | `network-manager` |
 | `powerprofilesctl` | power profile | `power-profiles-daemon` |
 | `kitty` | terminal apps (lazygit, btop, nvim...) | `kitty` |
 
@@ -69,7 +69,7 @@ matches and uses the exact address on the next try.
 
 Bagley only opens apps it knows, by name and without arguments:
 
-- A built-in list: kitty, zed (runs `zeditor` on Arch), firefox, chromium, thunar, nautilus,
+- A built-in list: kitty, zed (also found as `zeditor`), firefox, chromium, thunar, nautilus,
   dolphin, obsidian, spotify, code, discord, thunderbird, pavucontrol, and the terminal programs
   lazygit, btop, htop, nvim and yazi.
 - The applications installed on this computer: every `.desktop` entry in your XDG data

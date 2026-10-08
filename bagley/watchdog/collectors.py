@@ -30,11 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 
-from bagley.watchdog.versions import vercmp as py_vercmp
-
 if TYPE_CHECKING:
-    import httpx
-
     from bagley.watchdog.baseline import Baseline
 
 log = logging.getLogger("bagley.watchdog")
@@ -113,10 +109,12 @@ class Context:
     which: Callable[[str], str | None] = shutil.which
     clock: Callable[[], float] = time.time
     baseline: Baseline | None = None
-    http: httpx.AsyncClient | None = None
     platform: str = sys.platform
     sysfs: Path = Path("/sys")
     psutil: Any = psutil
+    os_release: Path = Path("/etc/os-release")
+    apt_lists: Path = Path("/var/lib/apt/lists")
+    auth_log: Path = Path("/var/log/auth.log")
     # Collector runs in progress, shared by reports asked for at the same time.
     running: dict[str, asyncio.Future[Section]] = field(default_factory=dict, repr=False)
 
@@ -126,6 +124,19 @@ class Context:
 
     def has(self, program: str) -> bool:
         return self.which(program) is not None
+
+    def distro(self) -> dict[str, str]:
+        """``/etc/os-release`` as a dict (ID, VERSION_CODENAME, ...); empty when unreadable."""
+        try:
+            text = self.os_release.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return {}
+        out = {}
+        for line in text.splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip().isidentifier():
+                out[key.strip()] = value.strip().strip("'\"")
+        return out
 
 
 @dataclass
@@ -265,7 +276,7 @@ async def _journal_readable(ctx: Context) -> bool:
     return any(True for _ in _json_lines(out))
 
 
-JOURNAL_HINT = "Add your user to the systemd-journal group to read system logs."
+JOURNAL_HINT = "Add your user to the adm group to read system logs: sudo usermod -aG adm $USER"
 
 
 def _ip(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -602,17 +613,22 @@ async def battery(ctx: Context) -> Section:
 
 # 5. Updates -------------------------------------------------------------------------------------
 
-SECURITY_PACKAGES = {"linux", "linux-lts", "linux-zen", "linux-hardened", "linux-firmware",
-                     "openssl", "openssl-1.1", "openssh", "openssh-server", "openssh-client",
-                     "glibc", "libc6", "sudo", "doas", "opendoas", "systemd", "systemd-libs",
-                     "firefox", "firefox-esr", "chromium", "google-chrome", "thunderbird",
-                     "gnupg", "gnutls", "curl", "libcurl", "polkit", "xz", "nss", "zlib",
-                     "wpa_supplicant", "networkmanager", "tailscale", "bash", "ca-certificates",
-                     "kernel", "kernel-core", "pam", "shadow", "util-linux", "openvpn",
-                     "wireguard-tools", "bind", "dnsmasq", "expat", "libxml2", "krb5",
-                     "samba", "cups", "intel-ucode", "amd-ucode", "grub"}  # fmt: skip
-SECURITY_PREFIXES = ("linux-image", "linux-headers", "libssl", "openssh", "openssl", "libpam")
-UPDATE_LINE = re.compile(r"^(\S+)\s+(\S+)\s+->\s+(\S+)")
+# Packages whose updates usually fix security problems, by Debian and Kali names. Kali has no
+# separate -security suite, so names are the signal there.
+SECURITY_PACKAGES = {"openssl", "libssl3", "libssl3t64", "openssh-server", "openssh-client",
+                     "openssh-sftp-server", "libc6", "libc-bin", "sudo", "systemd", "libsystemd0",
+                     "udev", "firefox-esr", "firefox", "chromium", "thunderbird", "gnupg", "gpg",
+                     "libgnutls30", "libgnutls30t64", "curl", "libcurl4", "libcurl4t64",
+                     "polkitd", "libpolkit-gobject-1-0", "xz-utils", "liblzma5", "libnss3",
+                     "zlib1g", "wpasupplicant", "network-manager", "tailscale", "bash",
+                     "ca-certificates", "libpam0g", "libpam-modules", "passwd", "login",
+                     "util-linux", "openvpn", "wireguard-tools", "bind9", "bind9-libs", "dnsmasq",
+                     "dnsmasq-base", "libexpat1", "libxml2", "libkrb5-3", "samba", "cups",
+                     "intel-microcode", "amd64-microcode", "grub-efi-amd64", "grub-pc", "git",
+                     "python3", "perl", "apache2", "nginx", "exim4", "postfix"}  # fmt: skip
+SECURITY_PREFIXES = ("linux-image", "linux-headers", "libssl", "openssh", "libpam", "firmware-")
+APT_LINE = re.compile(r"^([^/\s]+)/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from: ([^\]]+)\]")
+STALE_LISTS = 2 * 86400  # After two days `apt update` is due.
 
 
 def is_security_package(name: str) -> bool:
@@ -620,102 +636,52 @@ def is_security_package(name: str) -> bool:
     return base in SECURITY_PACKAGES or base.startswith(SECURITY_PREFIXES)
 
 
-def _arrow_updates(out: str, source: str) -> list[dict[str, Any]]:
-    found = []
-    for line in _ANSI.sub("", out).splitlines():
-        if "[ignored]" in line:
-            continue
-        if m := UPDATE_LINE.match(line.strip()):
-            found.append(
-                {"name": m.group(1), "old": m.group(2), "new": m.group(3), "source": source}
-            )
-    return found
-
-
 def _apt_updates(out: str) -> list[dict[str, Any]]:
+    """``apt list --upgradable``: name, suites, new version, arch, old version."""
     found = []
-    pattern = re.compile(r"^([^/\s]+)/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from: ([^\]]+)\]")
     for line in out.splitlines():
-        if m := pattern.match(line.strip()):
+        if m := APT_LINE.match(line.strip()):
             found.append(
                 {
                     "name": m.group(1),
                     "old": m.group(4),
                     "new": m.group(3),
-                    "source": "apt",
-                    "security": "-security" in m.group(2),
+                    "suite": m.group(2),
+                    "security": "-security" in m.group(2),  # Debian and Ubuntu, not Kali.
                 }
             )
     return found
 
 
-def _dnf_updates(out: str) -> list[dict[str, Any]]:
-    found = []
-    pattern = re.compile(r"^(\S+)\.([\w-]+)\s+(\S+)\s+(\S+)$")
-    for line in out.splitlines():
-        if line.startswith(("Obsoleting", "Security:")):
-            break
-        if m := pattern.match(line.strip()):
-            found.append({"name": m.group(1), "old": "", "new": m.group(3), "source": "dnf"})
-    return found
+def lists_age(ctx: Context) -> float | None:
+    """Seconds since the package lists were last refreshed (``apt update``), if known."""
+    try:
+        stamps = [
+            entry.stat().st_mtime
+            for entry in ctx.apt_lists.iterdir()
+            if entry.name.endswith(("Release", "InRelease"))
+        ]
+    except OSError:
+        return None
+    return max(0.0, ctx.clock() - max(stamps)) if stamps else None
 
 
-@collector("updates", "UPDATES", "Pending package updates (pacman, AUR, apt or dnf)", timeout=120)
+@collector("updates", "UPDATES", "Pending package updates (apt)", timeout=90)
 async def updates(ctx: Context) -> Section:
     sec = Section("updates", "UPDATES")
     if not ctx.linux:
         return sec.unavailable("PACKAGE UPDATES NEED LINUX")
-    pending: list[dict[str, Any]] = []
-    sources: list[str] = []
-    problems: list[str] = []
-    if ctx.has("pacman"):
-        if ctx.has("checkupdates"):
-            code, out, err = await ctx.run(["checkupdates"], 90)
-            if code in (0, 2):  # 2 means nothing to update.
-                pending += _arrow_updates(out, "pacman")
-                sources.append("checkupdates")
-            else:
-                problems.append(_why(code, err, "checkupdates"))
-        if "checkupdates" not in sources:
-            # Stale (last sync) but needs no network or root. pacman-contrib has checkupdates.
-            code, out, err = await ctx.run(["pacman", "-Qu"], 30)
-            if code in (0, 1) and not err.strip().lower().startswith("error"):
-                pending += _arrow_updates(out, "pacman")
-                sources.append("pacman -Qu")
-                sec.data["stale"] = True
-            else:
-                problems.append(_why(code, err, "pacman"))
-        helper = next((h for h in ("paru", "yay") if ctx.has(h)), None)
-        if helper:
-            code, out, err = await ctx.run([helper, "-Qua"], 90)
-            if code == 0 or (code == 1 and not out.strip()):
-                pending += _arrow_updates(out, "aur")
-                sources.append(f"{helper} -Qua")
-            else:
-                problems.append(_why(code, err, helper))
-    elif ctx.has("apt"):
-        code, out, err = await ctx.run(["apt", "list", "--upgradable"], 60)
-        if code == 0:
-            pending += _apt_updates(out)
-            sources.append("apt")
-        else:
-            problems.append(_why(code, err, "apt"))
-    elif ctx.has("dnf"):
-        code, out, err = await ctx.run(["dnf", "check-update", "-q"], 90)
-        if code in (0, 100):  # 100 means updates are available.
-            pending += _dnf_updates(out)
-            sources.append("dnf")
-        else:
-            problems.append(_why(code, err, "dnf"))
-    else:
-        return sec.unavailable("NO SUPPORTED PACKAGE MANAGER")
-    if not sources:
-        return sec.unavailable(problems[0] if problems else "UPDATE CHECK FAILED")
+    if not ctx.has("apt"):
+        return sec.unavailable("NEEDS APT (KALI, DEBIAN, UBUNTU)")
+    code, out, err = await ctx.run(["apt", "list", "--upgradable"], 60)
+    if code != 0:
+        return sec.unavailable(_why(code, err, "apt"))
+    pending = _apt_updates(out)
     for item in pending:
-        item["security"] = bool(item.get("security")) or is_security_package(item["name"])
+        item["security"] = item["security"] or is_security_package(item["name"])
     security = [p for p in pending if p["security"]]
     for item in security[:15]:
-        sec.add("warn", f"{item['name']} {item['old']} -> {item['new']}".replace("  ", " "))
+        sec.add("warn", f"{item['name']} {item['old']} -> {item['new']}")
     others = [p["name"] for p in pending if not p["security"]]
     if others:
         sec.add(
@@ -723,23 +689,28 @@ async def updates(ctx: Context) -> Section:
             f"{len(others)} OTHER UPDATE{'S' if len(others) > 1 else ''}",
             ", ".join(others[:12]) + (" …" if len(others) > 12 else ""),
         )
-    for problem in problems:
-        sec.add("info", problem)
-    aur = sum(1 for p in pending if p["source"] == "aur")
+    age = lists_age(ctx)
+    if age is not None and age > STALE_LISTS:
+        days = int(age // 86400)
+        sec.add(
+            "warn" if days >= 7 else "info",
+            f"PACKAGE LISTS {days} DAYS OLD",
+            "Run sudo apt update: this list is only as current as the last one.",
+        )
     if not pending:
         sec.summary = "UP TO DATE"
     else:
         parts = [f"{len(pending)} UPDATE{'S' if len(pending) > 1 else ''} PENDING"]
         if security:
             parts.insert(0, f"{len(security)} SECURITY UPDATE{'S' if len(security) > 1 else ''}")
-        if aur:
-            parts.append(f"{aur} AUR")
         sec.summary = " // ".join(parts)
+    if age is not None and age > STALE_LISTS:
+        sec.summary += f" // LISTS {int(age // 86400)}D OLD"
     sec.data.update(
         {
             "count": len(pending),
             "security": len(security),
-            "sources": sources,
+            "lists_age": round(age) if age is not None else None,
             "packages": [
                 {k: clean(p[k], 60) if isinstance(p[k], str) else p[k] for k in p}
                 for p in sorted(pending, key=lambda p: (not p["security"], p["name"]))[:60]
@@ -1123,21 +1094,107 @@ def _ssh_events(
     return {ip: s for ip, s in sources.items() if _ip(ip)}, accepted
 
 
-@collector("ssh", "SSH", "Failed SSH logins in the last 24 hours, by source address and user")
-async def ssh(ctx: Context) -> Section:
-    sec = Section("ssh", "SSH")
-    if not ctx.linux or not ctx.has("journalctl"):
-        return sec.unavailable("NO SYSTEMD JOURNAL ON THIS SYSTEM")
+AUTH_LOG_TAIL = 8_000_000  # Bytes read from the end of /var/log/auth.log.
+ISO_LINE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+\S+\s+"
+    r"([\w.-]+?)(?:\[\d+\])?:\s(.*)$"
+)
+SYSLOG_LINE = re.compile(
+    r"^([A-Z][a-z]{2})\s+(\d{1,2})\s(\d{2}):(\d{2}):(\d{2})\s+\S+\s+([\w.-]+?)(?:\[\d+\])?:\s(.*)$"
+)
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _syslog_time(m: re.Match[str], now: float) -> float | None:
+    """Classic syslog time has no year: this year, or last year if that would be the future."""
+    if m.group(1) not in MONTHS:
+        return None
+    month, day = MONTHS.index(m.group(1)) + 1, int(m.group(2))
+    hour, minute, second = (int(m.group(i)) for i in (3, 4, 5))
+    year = time.localtime(now).tm_year
+    for y in (year, year - 1):
+        try:
+            ts = time.mktime((y, month, day, hour, minute, second, 0, 0, -1))
+        except (OverflowError, ValueError):
+            return None
+        if ts <= now + 86400:
+            return ts
+    return None
+
+
+def auth_log_entries(text: str, now: float, since: float = 86400) -> list[dict[str, Any]]:
+    """sshd lines of the last day from an auth.log (rsyslog's ISO or the classic format), as
+    journal-like entries."""
+    from datetime import datetime
+
+    entries = []
+    for line in text.splitlines():
+        if "sshd" not in line:
+            continue
+        ts: float | None = None
+        if m := ISO_LINE.match(line):
+            stamp = m.group(1).replace("Z", "+00:00")
+            if re.search(r"[+-]\d{4}$", stamp):
+                stamp = stamp[:-2] + ":" + stamp[-2:]
+            try:
+                ts = datetime.fromisoformat(
+                    stamp[:26] + stamp[26:].lstrip("0123456789")
+                ).timestamp()
+            except ValueError:
+                ts = None
+            program, message = m.group(2), m.group(3)
+        elif m := SYSLOG_LINE.match(line):
+            ts = _syslog_time(m, now)
+            program, message = m.group(6), m.group(7)
+        else:
+            continue
+        if ts is None or not program.startswith("sshd") or ts < now - since:
+            continue  # OpenSSH 9.8+ logs as sshd-session.
+        entries.append({"MESSAGE": message, "__REALTIME_TIMESTAMP": str(int(ts * 1e6))})
+    return entries
+
+
+def _read_tail(path: Path, limit: int) -> str | None:
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+async def _ssh_journal(ctx: Context) -> tuple[list[dict[str, Any]] | None, str]:
+    """sshd's journal entries, or None and the reason they can't be read."""
+    if not ctx.has("journalctl"):
+        return None, "NO SYSTEMD JOURNAL ON THIS SYSTEM"
     code, out, err = await ctx.run(SSH_JOURNAL, 20)
     entries = list(_json_lines(out))
     if _journal_limited(err):
-        return sec.unavailable("NO ACCESS TO THE SYSTEM JOURNAL // JOIN systemd-journal")
+        return None, "NO ACCESS TO THE SYSTEM JOURNAL // JOIN adm"
     if _journal_missing(err) and not entries:
-        return sec.unavailable("NO JOURNAL FILES FOUND")
+        return None, "NO JOURNAL FILES FOUND"
     if code != 0 and not entries:
-        return sec.unavailable(_why(code, err, "journalctl"))
+        return None, _why(code, err, "journalctl")
     if not entries and not await _journal_readable(ctx):
-        return sec.unavailable("NO READABLE JOURNAL ENTRIES")
+        return None, "NO READABLE JOURNAL ENTRIES"
+    return entries, ""
+
+
+@collector("ssh", "SSH", "Failed SSH logins in the last 24 hours, by source address and user")
+async def ssh(ctx: Context) -> Section:
+    sec = Section("ssh", "SSH")
+    if not ctx.linux:
+        return sec.unavailable("SSH LOGINS NEED LINUX")
+    entries, reason = await _ssh_journal(ctx)
+    source = "journal"
+    if entries is None:
+        # Kali and Debian with rsyslog also keep /var/log/auth.log (readable by the adm group).
+        text = _read_tail(ctx.auth_log, AUTH_LOG_TAIL)
+        if text is None:
+            return sec.unavailable(reason)
+        entries, source = auth_log_entries(text, ctx.clock()), "auth.log"
     active = None
     if ctx.has("systemctl"):
         _, out, _ = await ctx.run(
@@ -1184,6 +1241,7 @@ async def ssh(ctx: Context) -> Section:
     if active is not None:
         sec.summary += " // SSHD " + ("ACTIVE" if active else "INACTIVE")
     sec.data = {
+        "source": source,
         "sshd_active": active,
         "failed": total,
         "external": external,
@@ -1211,167 +1269,38 @@ async def ssh(ctx: Context) -> Section:
 
 # 9. Vulnerabilities -----------------------------------------------------------------------------
 
-TRACKER_URL = "https://security.archlinux.org/all.json"
-TRACKER_CACHE = "cache.vulns.tracker"
-TRACKER_TTL = 6 * 3600
-TRACKER_MAX_BYTES = 40_000_000
-SEVERITY = {"critical": "crit", "high": "crit", "medium": "warn", "low": "info", "unknown": "info"}
-SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "unknown": 0}
+SEVERITY = {"high": "crit", "medium": "warn", "low": "info", "unknown": "info"}
+SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
+DEBSECAN_LINE = re.compile(r"^((?:CVE|TEMP)-\S+)\s+(\S+)(?:\s+\((.*)\))?")
 
 
-class Unavailable(Exception):
-    """A source gave no usable answer; the message says why."""
+def debsecan_suite(distro: dict[str, str]) -> str | None:
+    """The Debian suite to compare with. Kali rolling follows Debian testing, which takes its
+    fixes from unstable, so Kali compares with sid: a fix there is on its way to Kali."""
+    if distro.get("ID") == "kali":
+        return "sid"
+    if distro.get("ID") == "debian":
+        return distro.get("VERSION_CODENAME") or "sid"
+    return None
 
 
-def _vuln(
-    package: str, cves: list[str], kind: str, severity: str, version: str = "", fixed: str = ""
-) -> dict[str, Any]:
-    return {
-        "package": clean(package, 60),
-        "version": clean(version, 40),
-        "fixed": clean(fixed, 40),
-        "cves": [clean(c, 30) for c in cves if c][:20],
-        "type": clean(kind, 60),
-        "severity": severity.lower() if severity.lower() in SEVERITY else "unknown",
-    }
-
-
-def _ids(text: str) -> list[str]:
-    """CVE (or AVG) ids in a list like ``CVE-2024-1, CVE-2024-2``."""
-    return re.findall(r"\b[A-Z]{2,5}-\d{4}-\d+\b|\bAVG-\d+\b", text)
-
-
-def _parse_arch_audit(out: str) -> list[dict[str, Any]]:
-    found = []
-    plain = re.compile(r"^Package (\S+) is affected by (.+?)\. (\w+) risk!")
-    for line in _ANSI.sub("", out).splitlines():
-        line = line.strip()
-        if "|" in line:
-            name, cves, kind, severity, *_ = [*line.split("|"), "", "", ""]
-            found.append(_vuln(name, _ids(cves), kind, severity.strip()))
-        elif m := plain.match(line):
-            found.append(_vuln(m.group(1), _ids(m.group(2)), "", m.group(3)))
-    return found
-
-
-async def _arch_audit(ctx: Context) -> list[dict[str, Any]]:
-    code, out, err = await ctx.run(["arch-audit", "--format", "%n|%c|%t|%s"], 45)
-    if code != 0 and not out.strip():
-        code, out, err = await ctx.run(["arch-audit"], 45)  # Versions without --format.
-    if code != 0 and not out.strip():
-        raise Unavailable(_why(code, err, "arch-audit"))
-    return _parse_arch_audit(out)
-
-
-async def _tracker_groups(ctx: Context) -> list[dict[str, Any]]:
-    """The Arch security tracker's advisory groups, cached for six hours."""
-    now = ctx.clock()
-    cached = ctx.baseline.get(TRACKER_CACHE) if ctx.baseline else None
-    if isinstance(cached, dict) and now - cached.get("fetched_at", 0) < TRACKER_TTL:
-        return cached.get("groups") or []
-    if ctx.http is None:
-        raise Unavailable("NO HTTP CLIENT FOR THE SECURITY TRACKER")
-    try:
-        body = bytearray()
-        async with ctx.http.stream("GET", TRACKER_URL, timeout=30.0) as resp:
-            if resp.status_code != 200:
-                raise Unavailable(f"SECURITY TRACKER ANSWERED HTTP {resp.status_code}")
-            async for chunk in resp.aiter_bytes():
-                body += chunk
-                if len(body) > TRACKER_MAX_BYTES:
-                    raise Unavailable("SECURITY TRACKER RESPONSE TOO LARGE")
-        rows = json.loads(bytes(body))
-        if not isinstance(rows, list):
-            raise ValueError("not a list")
-    except Exception as exc:  # HTTP errors, bad JSON, a refusal above.
-        if isinstance(cached, dict) and cached.get("groups"):
-            return cached["groups"]  # Stale, but better than nothing.
-        if isinstance(exc, Unavailable):
-            raise
-        raise Unavailable("SECURITY TRACKER UNREACHABLE") from exc
-    groups = [
-        {
-            "name": clean(g.get("name"), 20),
-            "packages": [str(p) for p in g.get("packages") or []][:50],
-            "status": str(g.get("status") or ""),
-            "severity": str(g.get("severity") or "Unknown"),
-            "type": clean(g.get("type"), 60),
-            "fixed": str(g.get("fixed") or ""),
-            "issues": [str(i) for i in g.get("issues") or []][:20],
-        }
-        for g in rows
-        if isinstance(g, dict) and g.get("status") != "Not affected"
-    ]
-    if ctx.baseline is not None:
-        ctx.baseline.set(TRACKER_CACHE, {"fetched_at": now, "groups": groups}, now)
-    return groups
-
-
-async def _tracker(ctx: Context) -> list[dict[str, Any]]:
-    code, out, err = await ctx.run(["pacman", "-Q"], 30)
-    if code != 0:
-        raise Unavailable(_why(code, err, "pacman"))
-    installed = dict(line.split(None, 1) for line in out.splitlines() if len(line.split()) == 2)
-    groups = await _tracker_groups(ctx)
-    candidates = []
-    for g in groups:
-        for package in g["packages"]:
-            version = installed.get(package)
-            if version is None:
-                continue
-            if g["fixed"] and py_vercmp(version, g["fixed"]) >= 0:
-                continue
-            candidates.append((package, version, g))
-    if ctx.has("vercmp"):  # pacman's own comparison has the last word.
-        sem = asyncio.Semaphore(8)
-
-        async def still_affected(item: tuple[str, str, dict[str, Any]]) -> bool:
-            _, version, g = item
-            if not g["fixed"]:
-                return True
-            async with sem:
-                code, out, _ = await ctx.run(["vercmp", version, g["fixed"]], 5)
-            try:
-                return int(out.strip()) < 0 if code == 0 else True
-            except ValueError:
-                return True
-
-        keep = await asyncio.gather(*(still_affected(c) for c in candidates))
-        candidates = [c for c, k in zip(candidates, keep, strict=True) if k]
+def parse_debsecan(out: str) -> list[dict[str, Any]]:
+    """``debsecan`` lines, ``CVE-2024-1 openssl (fixed, remotely exploitable, high urgency)``,
+    merged per package with its highest urgency."""
     merged: dict[str, dict[str, Any]] = {}
-    for package, version, g in candidates:
-        item = merged.get(package)
-        if item is None:
-            merged[package] = _vuln(
-                package, g["issues"], g["type"], g["severity"], version, g["fixed"]
-            )
-            continue
-        item["cves"] = list(dict.fromkeys(item["cves"] + g["issues"]))[:20]
-        if SEVERITY_ORDER.get(g["severity"].lower(), 0) > SEVERITY_ORDER[item["severity"]]:
-            item["severity"] = (
-                g["severity"].lower() if g["severity"].lower() in SEVERITY else "unknown"
-            )
-            item["type"] = clean(g["type"], 60)
-        if g["fixed"] and (not item["fixed"] or py_vercmp(g["fixed"], item["fixed"]) > 0):
-            item["fixed"] = g["fixed"]
-    return list(merged.values())
-
-
-async def _debsecan(ctx: Context) -> list[dict[str, Any]]:
-    code, out, err = await ctx.run(["debsecan"], 60)
-    if code != 0:
-        raise Unavailable(_why(code, err, "debsecan"))
-    merged: dict[str, dict[str, Any]] = {}
-    pattern = re.compile(r"^((?:CVE|TEMP)-\S+)\s+(\S+)(?:\s+\((.*)\))?")
     for line in out.splitlines():
-        if not (m := pattern.match(line.strip())):
+        if not (m := DEBSECAN_LINE.match(line.strip())):
             continue
         notes = (m.group(3) or "").lower()
         severity = (
             "high" if "high urgency" in notes else "medium" if "medium urgency" in notes else "low"
         )
-        item = merged.setdefault(m.group(2), _vuln(m.group(2), [], notes, severity))
+        item = merged.setdefault(
+            m.group(2),
+            {"package": clean(m.group(2), 60), "cves": [], "severity": severity, "remote": False},
+        )
         item["cves"] = list(dict.fromkeys([*item["cves"], clean(m.group(1), 30)]))[:20]
+        item["remote"] = item["remote"] or "remotely exploitable" in notes
         if SEVERITY_ORDER[severity] > SEVERITY_ORDER[item["severity"]]:
             item["severity"] = severity
     return list(merged.values())
@@ -1380,56 +1309,59 @@ async def _debsecan(ctx: Context) -> list[dict[str, Any]]:
 @collector(
     "vulns",
     "VULNS",
-    "Known vulnerabilities in installed packages (arch-audit, Arch security tracker, debsecan)",
-    timeout=60,
+    "Known vulnerabilities with a fix in Debian, in installed packages (debsecan)",
+    timeout=120,
 )
 async def vulns(ctx: Context) -> Section:
     sec = Section("vulns", "VULNS")
     if not ctx.linux:
         return sec.unavailable("VULNERABILITY CHECK NEEDS LINUX")
-    found: list[dict[str, Any]] | None = None
-    reason = "NO VULNERABILITY SOURCE // INSTALL arch-audit"
-    for name, check, source in (
-        ("arch-audit", _arch_audit, "arch-audit"),
-        ("pacman", _tracker, "security.archlinux.org"),
-        ("debsecan", _debsecan, "debsecan"),
-    ):
-        if not ctx.has(name):
-            continue
-        try:
-            found = await check(ctx)
-            sec.data["source"] = source
-            break
-        except Unavailable as exc:
-            reason = str(exc)
-    if found is None:
-        return sec.unavailable(reason)
-    found.sort(key=lambda v: (-SEVERITY_ORDER[v["severity"]], v["package"]))
+    suite = debsecan_suite(ctx.distro())
+    if suite is None:
+        return sec.unavailable("NEEDS KALI OR DEBIAN (debsecan)")
+    if not ctx.has("debsecan"):
+        return sec.unavailable("INSTALL debsecan // sudo apt install debsecan")
+    # Only what has a fix: on a rolling system the unfixed low-urgency list runs to hundreds.
+    code, out, err = await ctx.run(["debsecan", "--suite", suite, "--only-fixed"], 100)
+    if code != 0:
+        return sec.unavailable(_why(code, err, "debsecan"))
+    found = parse_debsecan(out)
+    upgradable: set[str] = set()
+    if found and ctx.has("apt"):
+        code, out, _ = await ctx.run(["apt", "list", "--upgradable"], 60)
+        if code == 0:
+            upgradable = {u["name"] for u in _apt_updates(out)}
+    for v in found:
+        v["upgrade"] = v["package"] in upgradable
+    found.sort(key=lambda v: (-SEVERITY_ORDER[v["severity"]], not v["upgrade"], v["package"]))
+    kali = suite == "sid" and ctx.distro().get("ID") == "kali"
     for v in found[:15]:
-        cves = (
-            v["cves"][0] + (f" +{len(v['cves']) - 1}" if len(v["cves"]) > 1 else "")
-            if v["cves"]
-            else ""
-        )
-        version = f" {v['version']}" if v["version"] else ""
+        cves = v["cves"][0] + (f" +{len(v['cves']) - 1}" if len(v["cves"]) > 1 else "")
         detail = " // ".join(
             x
             for x in (
-                v["severity"].upper(),
-                v["type"],
-                f"fixed in {v['fixed']}" if v["fixed"] else "",
+                f"{v['severity'].upper()} URGENCY",
+                "remotely exploitable" if v["remote"] else "",
+                "upgrade available: sudo apt full-upgrade"
+                if v["upgrade"]
+                else f"fixed in Debian {suite}, not in {'Kali' if kali else 'your repositories'} yet",
             )
             if x
         )
-        sec.add(SEVERITY[v["severity"]], f"{v['package']}{version} // {cves}".rstrip(" /"), detail)
+        sec.add(SEVERITY[v["severity"]], f"{v['package']} // {cves}", detail)
     if len(found) > 15:
         sec.add("info", f"+{len(found) - 15} MORE PACKAGES")
-    high = sum(1 for v in found if SEVERITY[v["severity"]] == "crit")
+    high = sum(1 for v in found if v["severity"] == "high")
+    ready = sum(1 for v in found if v["upgrade"])
     if not found:
-        sec.summary = "NO KNOWN VULNERABILITIES"
+        sec.summary = "NO FIXED VULNERABILITIES PENDING"
     else:
         sec.summary = f"{len(found)} VULNERABLE PACKAGE{'S' if len(found) > 1 else ''}"
         if high:
             sec.summary += f" // {high} HIGH"
-    sec.data.update({"count": len(found), "high": high, "packages": found[:40]})
+        sec.summary += f" // {ready} UPGRADABLE NOW"
+    sec.data.update(
+        {"source": "debsecan", "suite": suite, "count": len(found), "high": high,
+         "upgradable": ready, "packages": found[:40]}
+    )  # fmt: skip
     return sec

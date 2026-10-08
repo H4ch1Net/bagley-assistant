@@ -69,9 +69,12 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 
 ## Quick start
 
-**1. Run a model server.** The easiest is [Ollama](https://ollama.com/download):
+Bagley is built for Kali Linux (and works the same on Debian); the server and web UI run anywhere Python does.
+
+**1. Run a model server.** The easiest is [Ollama](https://ollama.com/download), or skip this and use Claude or another hosted API with your key:
 
 ```bash
+curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3:4b
 ```
 
@@ -80,6 +83,7 @@ Any model works. Models with tool support give the best results; see [Choosing a
 **2. Install Bagley** (Python 3.10 or newer):
 
 ```bash
+sudo apt install pipx && pipx ensurepath
 pipx install git+https://github.com/H4ch1Net/bagley-assistant
 # or: uv tool install git+https://github.com/H4ch1Net/bagley-assistant
 # or, from a clone: pip install -e .
@@ -92,6 +96,8 @@ bagley
 ```
 
 This opens <http://127.0.0.1:8765>. If no model server is found, the start screen walks you through connecting one, and with Ollama you can download models from the UI.
+
+**4. On the desktop** (optional): `bagley desktop install` sets up the Hyprland overlay, mako, the zsh co-pilot and the wake word listener, and `sudo apt install debsecan` gives the watchdog its vulnerability check. See the [guides](#guides).
 
 ## Screenshots
 

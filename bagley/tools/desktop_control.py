@@ -46,8 +46,8 @@ LEGACY_SOCKETS = Path("/tmp/hypr")  # Where Hyprland before 0.40 kept its socket
 # Apps Bagley may open by name: (programs to try in order, runs inside a terminal).
 APPS: dict[str, tuple[tuple[str, ...], bool]] = {
     "kitty": (("kitty",), False),
-    "zed": (("zeditor", "zed"), False),  # Arch packages Zed as zeditor.
-    "zeditor": (("zeditor", "zed"), False),
+    "zed": (("zed", "zeditor"), False),  # Zed's installer; some distributions say zeditor.
+    "zeditor": (("zed", "zeditor"), False),
     "firefox": (("firefox",), False),
     "chromium": (("chromium", "chromium-browser"), False),
     "thunar": (("thunar",), False),
@@ -66,12 +66,12 @@ APPS: dict[str, tuple[tuple[str, ...], bool]] = {
     "yazi": (("yazi",), True),
 }
 
-# What to install when a program is missing (Arch package names).
+# What to install when a program is missing (Kali and Debian package names).
 PACKAGES = {
     "hyprctl": "hyprland",
     "playerctl": "playerctl",
     "wpctl": "wireplumber",
-    "nmcli": "networkmanager",
+    "nmcli": "network-manager",
     "powerprofilesctl": "power-profiles-daemon",
     "kitty": "kitty",
 }
@@ -175,7 +175,7 @@ class Desktop:
     def require(self, program: str) -> None:
         if not self.which(program):
             package = PACKAGES.get(program)
-            hint = f" (package: {package})" if package else ""
+            hint = f" (sudo apt install {package})" if package else ""
             raise ToolError(f"{program} is not installed{hint}.")
 
     def call(self, program: str, *args: str, timeout: float = TIMEOUT) -> Result:

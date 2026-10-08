@@ -16,7 +16,6 @@ import contextlib
 import json
 import os
 import sys
-from typing import Any
 
 from bagley.cli import Style
 from bagley.config import ServerConfig, resolve_preferences
@@ -55,9 +54,9 @@ def _sections(values: list[str] | None) -> list[str] | None:
     return section_ids(values) if values else None
 
 
-def make_context(store: Store, http: Any) -> Context:
+def make_context(store: Store) -> Context:
     """The collectors' context for this process (tests replace it)."""
-    return Context(baseline=Baseline(store), http=http)
+    return Context(baseline=Baseline(store))
 
 
 async def _briefing(sections: list[str] | None, notify: bool) -> Report:
@@ -69,7 +68,7 @@ async def _briefing(sections: list[str] | None, notify: bool) -> Report:
     store = Store(config.db_path)
     try:
         async with httpx.AsyncClient(timeout=20.0) as http:
-            report = await collect(None, sections, context=make_context(store, http))
+            report = await collect(None, sections, context=make_context(store))
             if notify:
                 prefs, _ = resolve_preferences(store.get_preferences(), os.environ)
                 base = os.environ.get("BAGLEY_PUBLIC_URL") or f"http://127.0.0.1:{config.port}"

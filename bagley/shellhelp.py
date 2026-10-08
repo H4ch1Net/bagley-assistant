@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from bagley.runtime import Runtime
 
 OS_RELEASE = Path("/etc/os-release")
-PACKAGE_MANAGERS = ("paru", "yay", "pacman", "apt", "dnf", "zypper", "apk", "xbps-install",
-                    "emerge", "nix", "brew", "port", "winget", "scoop")  # fmt: skip
+PACKAGE_MANAGERS = ("apt", "dnf", "pacman", "zypper", "apk", "xbps-install", "emerge", "nix",
+                    "brew", "port", "winget", "scoop", "pipx")  # fmt: skip
 TOOLS = (
     "fd", "rg", "eza", "bat", "jq", "yq", "fzf", "zoxide", "dust", "duf", "ncdu", "btop", "htop",
     "procs", "sd", "delta", "tldr", "git", "gh", "docker", "podman", "flatpak", "systemctl",

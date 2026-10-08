@@ -89,9 +89,9 @@ FIX  fd -S +1G
 - Press **Ctrl+C** while it says `» bagley: thinking...` to cancel; your line stays as it was.
 - `??` alone shows a hint. `??` lines are never added to your history; the command you run is.
 - Interrupted (Ctrl+C, status 130) and suspended (Ctrl+Z, 148) commands don't count as failures.
-- The suggestion knows your OS (from `/etc/os-release`), kernel, shell, package managers (pacman,
-  paru, yay, apt, dnf, brew...) and which modern tools are installed (fd, rg, eza, bat, jq, dust,
-  duf, btop, systemctl, journalctl, nmcli, hyprctl...), so it uses what you have.
+- The suggestion knows your OS (from `/etc/os-release`, so it knows it's Kali), kernel, shell,
+  package managers (apt, pipx...) and which tools are installed (fd or Debian's fdfind, rg, eza,
+  bat, jq, btop, systemctl, journalctl, nmcli, hyprctl...), so it uses what you have.
 
 Without the plugin, from any shell or script:
 

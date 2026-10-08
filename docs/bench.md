@@ -127,12 +127,12 @@ back on `auto` if it was pinned to that machine.
 The usual setup: Bagley on the laptop, Ollama on the desktop's GPU, both on the same Tailscale
 network.
 
-**On the desktop** (Arch, AMD GPU):
+**On the desktop** (Kali, AMD GPU). Ollama's installer adds ROCm support for Radeon cards such as the RX 7900 XT by itself:
 
 ```sh
-sudo pacman -S ollama-rocm        # ollama-cuda for NVIDIA
+curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl edit ollama        # add the lines below
-sudo systemctl enable --now ollama
+sudo systemctl restart ollama
 ```
 
 ```ini

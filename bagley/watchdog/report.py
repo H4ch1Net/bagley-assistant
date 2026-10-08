@@ -62,7 +62,7 @@ def context_for(rt: Runtime) -> Context:
     with fake programs there."""
     ctx = rt.services.get("watchdog")
     if ctx is None:
-        ctx = rt.services["watchdog"] = Context(baseline=Baseline(rt.store), http=rt.http)
+        ctx = rt.services["watchdog"] = Context(baseline=Baseline(rt.store))
     return ctx
 
 
@@ -184,8 +184,8 @@ async def _run_once(item: Collector, ctx: Context) -> Section:
 
 
 async def _run(item: Collector, ctx: Context) -> Section:
-    """Run a collector, or join the run already in progress (two checkupdates at once fail,
-    and a slow check shouldn't run twice because the chat and a briefing asked together)."""
+    """Run a collector, or join the run already in progress (a slow check such as debsecan
+    shouldn't run twice because the chat and a briefing asked together)."""
     task = ctx.running.get(item.id)
     if task is None:
         task = asyncio.ensure_future(_run_once(item, ctx))

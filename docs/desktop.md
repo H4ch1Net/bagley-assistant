@@ -25,7 +25,7 @@ The files are in the repository under `desktop/`:
 - The JetBrainsMono Nerd Font, which ctOS uses already.
 - A running Bagley server (`bagley`, or as a user service). Without one, the commands run the turn in their own process, which is slower to start and can't ask for approvals (tools that need one are declined).
 
-On Arch: `pacman -S grim wl-clipboard libnotify mako` and `ollama pull qwen2.5vl:7b`.
+On Kali: `sudo apt install grim wl-clipboard libnotify-bin mako-notifier` and `ollama pull qwen2.5vl:7b`. Quickshell isn't packaged for Kali; build it from source as its site describes. The Nerd Font isn't packaged either: download JetBrainsMono from the Nerd Fonts releases into `~/.local/share/fonts` and run `fc-cache -f`.
 
 Quickshell runs `bagley` from its `PATH`. When Hyprland starts Quickshell, `~/.local/bin` (pipx, `pip install --user`) may not be on it. Then set `BAGLEY_BIN` to the full path in the environment Quickshell starts with, for example `hl.env("BAGLEY_BIN", os.getenv("HOME") .. "/.local/bin/bagley")` in `hyprland.lua` (or `env = BAGLEY_BIN,/home/you/.local/bin/bagley` in hyprlang). `BAGLEY_URL` and `BAGLEY_TOKEN` work as for every other client, and right-clicking the segment opens `BAGLEY_URL` (default `http://127.0.0.1:8765`).
 
@@ -260,4 +260,4 @@ Approval requests arrive as critical notifications (red border, they stay) with 
 - **"... has no model that can see images".** Pull a vision model (`ollama pull qwen2.5vl:7b`) or pick one in Settings → Model. `bagley see --no-image` asks with the text context only.
 - **No notification.** Check that mako is running and that `notify-send test` shows one. Bagley skips notifications when `notify-send` is missing or there is no session bus. `--no-notify` turns them off on purpose.
 - **Approvals are declined at once.** No server was running, so the turn ran in the command's own process, which can't wait for an answer (the overlay shows `NO SERVER // RUNNING HERE`). Start the server.
-- **Wrong font or glyphs.** The overlay and segment use the JetBrainsMono Nerd Font, as ctOS does. Install it (`ttf-jetbrains-mono-nerd` on Arch).
+- **Wrong font or glyphs.** The overlay and segment use the JetBrainsMono Nerd Font, as ctOS does. Install it from the Nerd Fonts releases into `~/.local/share/fonts`, then `fc-cache -f`.

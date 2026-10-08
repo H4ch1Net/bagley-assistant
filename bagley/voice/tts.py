@@ -96,8 +96,8 @@ def prepare(text: str, *, character: bool = True, max_chars: int = MAX_CHARS) ->
 
 
 def piper_binary() -> str | None:
-    """Piper's command. Arch's ``piper`` package is a gaming mouse configurator with the same
-    name, so ``piper-tts`` (AUR piper-tts-bin) comes first and a GTK ``piper`` is skipped."""
+    """Piper's command. Kali's and Debian's ``piper`` package is a gaming mouse configurator
+    with the same name, so ``piper-tts`` comes first and a GTK ``piper`` is skipped."""
     for name in ("piper-tts", "piper"):
         path = find_program(name)
         if path and not _is_mouse_app(path):

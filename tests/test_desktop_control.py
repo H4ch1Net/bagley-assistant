@@ -41,7 +41,7 @@ CLIENTS = [
     },
     {"address": "0x55aa04", "mapped": False, "class": "ghost", "title": "", "focusHistoryID": 3},
 ]
-INSTALLED = {"hyprctl", "playerctl", "wpctl", "nmcli", "powerprofilesctl", "kitty", "zeditor"}
+INSTALLED = {"hyprctl", "playerctl", "wpctl", "nmcli", "powerprofilesctl", "kitty", "zed"}
 INSTALLED |= {"lazygit", "firefox"}
 
 
@@ -111,7 +111,7 @@ async def test_launch_app_only_opens_allowed_apps(fake):
     assert fake.envs[-1]["HYPRLAND_INSTANCE_SIGNATURE"] == "abc123"
 
     await call(dc.launch_app, command="Zed")
-    assert fake.dispatched()[-1] == ["exec", "zeditor"]  # Arch's name for Zed.
+    assert fake.dispatched()[-1] == ["exec", "zed"]
 
     for bad in ("rm -rf ~", "kitty -e rm -rf ~", "firefox; reboot", "$(reboot)", ""):
         with pytest.raises(ToolError):
@@ -123,7 +123,7 @@ async def test_launch_app_only_opens_allowed_apps(fake):
     assert len(fake.dispatched()) == 2  # Nothing rejected reached Hyprland.
 
     fake.installed.discard("kitty")
-    with pytest.raises(ToolError, match=r"kitty is not installed \(package: kitty\)"):
+    with pytest.raises(ToolError, match=r"kitty is not installed \(sudo apt install kitty\)"):
         await call(dc.launch_app, command="lazygit")
 
 
@@ -268,7 +268,9 @@ async def test_status_reports_each_part_and_missing_programs(fake):
     assert status["wifi"] == {"connected": True, "ssid": "Home:Net", "signal": 72}
     assert status["power_profile"] == "balanced"
     assert status["media"] is None
-    assert status["unavailable"] == {"media": "playerctl is not installed (package: playerctl)."}
+    assert status["unavailable"] == {
+        "media": "playerctl is not installed (sudo apt install playerctl)."
+    }
     with pytest.raises(ToolError, match="playerctl is not installed"):
         await call(dc.media, action="pause")
 

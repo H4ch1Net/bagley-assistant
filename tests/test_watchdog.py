@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -18,15 +18,15 @@ from bagley.watchdog.baseline import NEW_FOR, Baseline, reset
 from bagley.watchdog.collectors import (
     COLLECTORS,
     SSH_JOURNAL,
-    TRACKER_URL,
     Context,
     Finding,
     Section,
+    auth_log_entries,
     clean,
+    debsecan_suite,
     run_command,
 )
 from bagley.watchdog.report import Report, collect, section_ids
-from bagley.watchdog.versions import vercmp
 from tests.mock_llm import Reply
 
 pytestmark = pytest.mark.anyio
@@ -40,8 +40,22 @@ SS = ("ss", "-H", "-tulpn")
 NEIGH = ("ip", "-j", "neigh")
 ROUTE = ("ip", "-j", "route", "show", "default")
 TAILSCALE = ("tailscale", "status", "--json")
-ARCH_AUDIT = ("arch-audit", "--format", "%n|%c|%t|%s")
+APT = ("apt", "list", "--upgradable")
+DEBSECAN = ("debsecan", "--suite", "sid", "--only-fixed")
 SSH = tuple(SSH_JOURNAL)
+KALI = 'PRETTY_NAME="Kali GNU/Linux Rolling"\nNAME="Kali GNU/Linux"\nID=kali\nVERSION_CODENAME=kali-rolling\nID_LIKE=debian\n'
+APT_OUT = """\
+Listing...
+linux-image-amd64/kali-rolling 6.11.2-1kali1 amd64 [upgradable from: 6.11.1-1kali1]
+openssl/kali-rolling 3.3.2-1 amd64 [upgradable from: 3.3.1-1]
+vim/kali-rolling 2:9.1.0-1 amd64 [upgradable from: 2:9.1.0-0]
+burpsuite/kali-rolling 2024.9-0kali1 amd64 [upgradable from: 2024.8-0kali1]
+"""
+DEBSECAN_OUT = """\
+CVE-2024-0001 openssl (fixed, remotely exploitable, high urgency)
+CVE-2024-0002 openssl (fixed, low urgency)
+CVE-2024-0100 libtiff6 (fixed, medium urgency)
+"""
 
 
 class Clock:
@@ -167,10 +181,10 @@ tcp   ESTAB  0      0      192.168.1.10:51234 140.82.112.3:443
 """
 
 
-def arch_laptop(
+def kali_laptop(
     tmp_path: Path, clock: Clock | None = None, store=None
 ) -> tuple[FakeSystem, Context]:
-    """An Arch laptop with something to report in every section."""
+    """A Kali laptop with something to report in every section."""
     failed = [
         {"unit": "nftables.service", "load": "loaded", "active": "failed", "sub": "failed", "description": "Netfilter Tables"},
         {"unit": "bluetooth.service", "load": "loaded", "active": "failed", "sub": "failed", "description": "Bluetooth service"},
@@ -202,11 +216,7 @@ def arch_laptop(
                 json.dumps({"smart_status": {"passed": False}}),
                 "",
             ),
-            ("checkupdates",): "linux 6.10.1.arch1-1 -> 6.10.2.arch1-1\n"
-            "openssl 3.3.1-1 -> 3.3.2-1\nvim 9.1.0-1 -> 9.1.1-1\n",
-            ("paru", "-Qua"): "visual-studio-code-bin 1.91.0-1 -> 1.92.0-1\n"
-            "spotify 1:1.2.3-1 -> 1:1.2.4-1 [ignored]\n",
-            ("pacman", "-Q"): "openssl 3.3.1-1\n",
+            APT: APT_OUT,
             NEIGH: json.dumps(NEIGHBORS),
             ROUTE: json.dumps([{"dst": "default", "gateway": "192.168.1.1", "dev": "wlan0"}]),
             (
@@ -226,10 +236,15 @@ def arch_laptop(
                 "active\ninactive\ninactive\ninactive\n",
                 "",
             ),
-            ARCH_AUDIT: "openssl|CVE-2024-0001,CVE-2024-0002|multiple issues|High\n"
-            "libtiff|CVE-2024-0100|denial of service|Medium\n",
+            DEBSECAN: DEBSECAN_OUT,
         }
     )
+    (tmp_path / "os-release").write_text(KALI)
+    lists = tmp_path / "apt-lists"
+    lists.mkdir(exist_ok=True)
+    (lists / "http.kali.org_kali_dists_kali-rolling_InRelease").touch()
+    stamp = (clock or Clock()).now - 3600  # Updated an hour ago.
+    os.utime(lists / "http.kali.org_kali_dists_kali-rolling_InRelease", (stamp, stamp))
     battery = tmp_path / "sys" / "class" / "power_supply" / "BAT0"
     battery.mkdir(parents=True, exist_ok=True)
     for name, value in {
@@ -259,6 +274,9 @@ def arch_laptop(
         platform="linux",
         sysfs=tmp_path / "sys",
         psutil=ps,
+        os_release=tmp_path / "os-release",
+        apt_lists=tmp_path / "apt-lists",
+        auth_log=tmp_path / "auth.log",
     )
     return fake, ctx
 
@@ -279,8 +297,8 @@ def store(make_runtime):
 # Collectors --------------------------------------------------------------------------------------
 
 
-async def test_full_report_on_an_arch_laptop(tmp_path, store):
-    _, ctx = arch_laptop(tmp_path, store=store)
+async def test_full_report_on_a_kali_laptop(tmp_path, store):
+    _, ctx = kali_laptop(tmp_path, store=store)
     report = await collect(None, context=ctx)
     s = by_id(report)
     assert [x.id for x in report.sections] == list(COLLECTORS)
@@ -312,13 +330,15 @@ async def test_full_report_on_an_arch_laptop(tmp_path, store):
     assert s["battery"].findings[0].detail == "40.0 Wh of 57.0 Wh when new, 412 cycles"
 
     updates = s["updates"]
-    assert updates.status == "warn"
-    assert updates.summary == "2 SECURITY UPDATES // 4 UPDATES PENDING // 1 AUR"
-    assert texts(updates)[:2] == [
-        "linux 6.10.1.arch1-1 -> 6.10.2.arch1-1",
+    assert updates.status == "warn"  # Kali has no -security suite: names tell.
+    assert updates.summary == "2 SECURITY UPDATES // 4 UPDATES PENDING"
+    assert texts(updates) == [
+        "linux-image-amd64 6.11.1-1kali1 -> 6.11.2-1kali1",
         "openssl 3.3.1-1 -> 3.3.2-1",
+        "2 OTHER UPDATES",
     ]
-    assert "spotify" not in json.dumps(updates.data)  # Ignored by the AUR helper.
+    assert updates.findings[2].detail == "vim, burpsuite"
+    assert updates.data["lists_age"] == 3600
 
     network = s["network"]
     assert network.status == "info"
@@ -354,10 +374,13 @@ async def test_full_report_on_an_arch_laptop(tmp_path, store):
     assert local.severity == "info"  # From the local network.
 
     vulns = s["vulns"]
-    assert vulns.status == "crit" and vulns.data["source"] == "arch-audit"
-    assert vulns.summary == "2 VULNERABLE PACKAGES // 1 HIGH"
-    assert texts(vulns) == ["openssl // CVE-2024-0001 +1", "libtiff // CVE-2024-0100"]
-    assert vulns.findings[0].detail == "HIGH // multiple issues"
+    assert vulns.status == "crit" and vulns.data["source"] == "debsecan"
+    assert vulns.summary == "2 VULNERABLE PACKAGES // 1 HIGH // 1 UPGRADABLE NOW"
+    assert texts(vulns) == ["openssl // CVE-2024-0001 +1", "libtiff6 // CVE-2024-0100"]
+    assert vulns.findings[0].detail == (
+        "HIGH URGENCY // remotely exploitable // upgrade available: sudo apt full-upgrade"
+    )
+    assert vulns.findings[1].detail == "MEDIUM URGENCY // fixed in Debian sid, not in Kali yet"
 
     assert report.status() == "crit" and report.level() == "critical"
     assert report.counts() == {"ok": 0, "info": 2, "warn": 3, "crit": 4, "unavailable": 0}
@@ -375,6 +398,9 @@ async def test_missing_programs_and_other_platforms(tmp_path):
         platform="linux",
         sysfs=tmp_path,
         psutil=FakePsutil(connections=PermissionError("Access denied")),
+        os_release=tmp_path / "none",
+        apt_lists=tmp_path / "none",
+        auth_log=tmp_path / "none",
     )
     report = await collect(None, context=ctx)
     assert {s.id: s.summary for s in report.sections} == {
@@ -382,11 +408,11 @@ async def test_missing_programs_and_other_platforms(tmp_path):
         "journal": "NO SYSTEMD JOURNAL ON THIS SYSTEM",
         "disks": "NO FILESYSTEMS FOUND",
         "battery": "NO BATTERY FOUND",
-        "updates": "NO SUPPORTED PACKAGE MANAGER",
+        "updates": "NEEDS APT (KALI, DEBIAN, UBUNTU)",
         "network": "IP AND TAILSCALE NOT FOUND",
         "ports": "SOCKETS UNREADABLE: Access denied",
         "ssh": "NO SYSTEMD JOURNAL ON THIS SYSTEM",
-        "vulns": "NO VULNERABILITY SOURCE // INSTALL arch-audit",
+        "vulns": "NEEDS KALI OR DEBIAN (debsecan)",
     }
     assert all(s.status == "unavailable" for s in report.sections)
     assert report.level() == "info" and report.headline() == "ALL CLEAR // 0 OK · 9 N/A"
@@ -406,7 +432,7 @@ async def test_missing_programs_and_other_platforms(tmp_path):
 
 
 async def test_permission_problems_degrade_quietly(tmp_path, store):
-    fake, ctx = arch_laptop(tmp_path, store=store)
+    fake, ctx = kali_laptop(tmp_path, store=store)
     hint = (
         "Hint: You are currently not seeing messages from other users and the system.\n"
         "      Users in groups 'adm', 'systemd-journal', 'wheel' can see all messages.\n"
@@ -418,9 +444,9 @@ async def test_permission_problems_degrade_quietly(tmp_path, store):
     fake.set(USER_SYSTEMCTL, (1, "", "Failed to connect to bus"))
     s = by_id(await collect(None, ["services", "journal", "disks", "ssh"], context=ctx))
     assert texts(s["journal"]) == ["app.service ×1", "ONLY YOUR OWN JOURNAL IS READABLE"]
-    assert "systemd-journal" in s["journal"].findings[-1].detail
+    assert "usermod -aG adm" in s["journal"].findings[-1].detail
     # Without the system journal "no failed logins" would be a lie.
-    assert s["ssh"].status == "unavailable" and "systemd-journal" in s["ssh"].summary
+    assert s["ssh"].status == "unavailable" and s["ssh"].summary.endswith("JOIN adm")
     assert s["disks"].data["smart"] == {"/dev/nvme0": "NO ACCESS", "/dev/sda": "NO ACCESS"}
     assert not any("SMART" in t for t in texts(s["disks"]))
     assert s["services"].data["user"] is None and len(s["services"].findings) == 2
@@ -443,7 +469,7 @@ async def test_permission_problems_degrade_quietly(tmp_path, store):
 
 
 async def test_older_systemctl_and_journal_timeouts(tmp_path, store):
-    fake, ctx = arch_laptop(tmp_path, store=store)
+    fake, ctx = kali_laptop(tmp_path, store=store)
     fake.set((*SYSTEMCTL, "--output=json"), (1, "", "Unknown output 'json'."))
     fake.set(SYSTEMCTL, "  nginx.service loaded failed failed A high performance web server\n")
     fake.set(JOURNAL, (124, "", "journalctl timed out after 20s"))
@@ -454,7 +480,7 @@ async def test_older_systemctl_and_journal_timeouts(tmp_path, store):
 
 
 async def test_a_collector_that_hangs_or_breaks_is_contained(tmp_path, monkeypatch):
-    _, ctx = arch_laptop(tmp_path)
+    _, ctx = kali_laptop(tmp_path)
 
     async def hang(ctx):
         import asyncio
@@ -476,7 +502,7 @@ async def test_a_collector_that_hangs_or_breaks_is_contained(tmp_path, monkeypat
 async def test_reports_asked_together_share_slow_checks(tmp_path):
     import asyncio
 
-    fake, ctx = arch_laptop(tmp_path)
+    fake, ctx = kali_laptop(tmp_path)
     slow = fake.run
 
     async def run(args, timeout):
@@ -487,57 +513,37 @@ async def test_reports_asked_together_share_slow_checks(tmp_path):
     first, second = await asyncio.gather(
         collect(None, ["updates"], context=ctx), collect(None, ["updates", "battery"], context=ctx)
     )
-    assert fake.calls.count(["checkupdates"]) == 1
+    assert fake.calls.count(list(APT)) == 1
     assert by_id(first)["updates"] is by_id(second)["updates"]
     await collect(None, ["updates"], context=ctx)
-    assert fake.calls.count(["checkupdates"]) == 2  # Finished runs aren't reused.
+    assert fake.calls.count(list(APT)) == 2  # Finished runs aren't reused.
 
 
 # Updates -----------------------------------------------------------------------------------------
 
 
-async def test_update_fallbacks(tmp_path):
-    fake, ctx = arch_laptop(tmp_path)
-    fake.programs = {"pacman"}  # No pacman-contrib, no AUR helper.
-    fake.set(("pacman", "-Qu"), "sudo 1.9.15-1 -> 1.9.16-1\n")
-    s = by_id(await collect(None, ["updates"], context=ctx))["updates"]
-    assert s.summary == "1 SECURITY UPDATE // 1 UPDATE PENDING" and s.data["stale"] is True
-
-    fake.programs = {"apt"}
+async def test_updates_on_debian_and_with_stale_lists(tmp_path):
+    fake, ctx = kali_laptop(tmp_path)
     fake.set(
-        ("apt", "list", "--upgradable"),
+        APT,
         "Listing...\n"
-        "libssl3/jammy-updates,jammy-security 3.0.2-0ubuntu1.15 amd64 [upgradable from: 3.0.2-0ubuntu1.14]\n"
-        "htop/jammy-updates 3.0.5-7build3 amd64 [upgradable from: 3.0.5-7build2]\n",
+        "libssl3t64/trixie-security 3.5.1-1+deb13u1 amd64 [upgradable from: 3.5.1-1]\n"
+        "htop/trixie 3.4.1-5 amd64 [upgradable from: 3.4.1-4]\n",
     )
     s = by_id(await collect(None, ["updates"], context=ctx))["updates"]
     assert s.summary == "1 SECURITY UPDATE // 2 UPDATES PENDING"
-    assert texts(s) == ["libssl3 3.0.2-0ubuntu1.14 -> 3.0.2-0ubuntu1.15", "1 OTHER UPDATE"]
+    assert texts(s) == ["libssl3t64 3.5.1-1 -> 3.5.1-1+deb13u1", "1 OTHER UPDATE"]
 
-    fake.programs = {"dnf"}
-    fake.set(
-        ("dnf", "check-update", "-q"),
-        (
-            100,
-            "\nopenssh.x86_64    9.6p1-1.fc40    updates\ngimp.x86_64  2:2.10.38-1.fc40  updates\n",
-            "",
-        ),
-    )
+    ctx.clock.now += 9 * 86400  # Nobody ran apt update for over a week.
+    fake.set(APT, "Listing...\n")
     s = by_id(await collect(None, ["updates"], context=ctx))["updates"]
-    assert s.status == "warn" and texts(s)[0] == "openssh -> 9.6p1-1.fc40"
+    assert s.status == "warn" and s.summary == "UP TO DATE // LISTS 9D OLD"
+    assert texts(s) == ["PACKAGE LISTS 9 DAYS OLD"]
+    assert "sudo apt update" in s.findings[0].detail
 
-    fake.programs = {"pacman", "checkupdates", "yay"}
-    fake.set(("checkupdates",), (2, "", ""))
-    fake.set(("yay", "-Qua"), (1, "", ""))
+    fake.set(APT, (100, "", "E: Could not open lock file"))
     s = by_id(await collect(None, ["updates"], context=ctx))["updates"]
-    assert s.status == "ok" and s.summary == "UP TO DATE"
-
-    fake.set(("checkupdates",), (1, "", "==> ERROR: Cannot fetch updates"))
-    fake.set(("pacman", "-Qu"), (1, "", ""))
-    s = by_id(await collect(None, ["updates"], context=ctx))["updates"]
-    assert s.status == "info" and texts(s) == [
-        "CHECKUPDATES FAILED: ==> ERROR: Cannot fetch updates"
-    ]
+    assert s.status == "unavailable" and s.summary.startswith("APT FAILED")
 
 
 # Baselines ---------------------------------------------------------------------------------------
@@ -545,7 +551,7 @@ async def test_update_fallbacks(tmp_path):
 
 async def test_baseline_flags_new_ports_devices_and_peers(tmp_path, store):
     clock = Clock()
-    fake, ctx = arch_laptop(tmp_path, clock, store)
+    fake, ctx = kali_laptop(tmp_path, clock, store)
     first = by_id(await collect(None, ["network", "ports"], context=ctx))
     assert first["network"].summary.startswith("BASELINE RECORDED")
     assert first["ports"].summary.startswith("BASELINE RECORDED")
@@ -617,7 +623,7 @@ async def test_baseline_flags_new_ports_devices_and_peers(tmp_path, store):
 
 
 async def test_each_network_gets_its_own_baseline(tmp_path, store):
-    fake, ctx = arch_laptop(tmp_path, store=store)
+    fake, ctx = kali_laptop(tmp_path, store=store)
     await collect(None, ["network"], context=ctx)
     fake.set(
         NEIGH,
@@ -635,138 +641,93 @@ def test_baseline_reset_keeps_caches(store):
     base.set("ports", {"items": {}})
     base.set("network.devices.x", {"items": {}})
     base.set("network.tailscale", {"items": {}})
-    base.set("cache.vulns.tracker", {"groups": []})
+    base.set("cache.last_report", {"sections": []})
     assert sorted(base.reset(["network"])) == ["network.devices.x", "network.tailscale"]
     assert base.reset() == ["ports"]
-    assert base.get("cache.vulns.tracker") == {"groups": []}
+    assert base.get("cache.last_report") == {"sections": []}
 
 
 # Vulnerabilities ---------------------------------------------------------------------------------
 
-TRACKER = [
-    {"name": "AVG-1", "packages": ["openssl"], "status": "Fixed", "severity": "High", "type": "arbitrary code execution", "fixed": "3.3.2-1", "issues": ["CVE-2024-1111"]},
-    {"name": "AVG-2", "packages": ["openssl"], "status": "Fixed", "severity": "Medium", "type": "denial of service", "fixed": "3.0.0-1", "issues": ["CVE-2020-0001"]},
-    {"name": "AVG-3", "packages": ["libtiff"], "status": "Vulnerable", "severity": "Medium", "type": "denial of service", "fixed": None, "issues": ["CVE-2024-2222"]},
-    {"name": "AVG-4", "packages": ["not-installed"], "status": "Vulnerable", "severity": "Critical", "fixed": None, "issues": ["CVE-2024-3333"]},
-    {"name": "AVG-5", "packages": ["vim"], "status": "Not affected", "severity": "Low", "fixed": None, "issues": ["CVE-2024-4444"]},
-    {"name": "AVG-6", "packages": ["zstd"], "status": "Fixed", "severity": "Low", "fixed": "1:1.5.6-1", "issues": ["CVE-2024-5555"]},
-]  # fmt: skip
+
+def test_debsecan_suite_follows_the_distribution():
+    assert debsecan_suite({"ID": "kali", "VERSION_CODENAME": "kali-rolling"}) == "sid"
+    assert debsecan_suite({"ID": "debian", "VERSION_CODENAME": "trixie"}) == "trixie"
+    assert debsecan_suite({"ID": "ubuntu", "ID_LIKE": "debian"}) is None
 
 
-async def test_security_tracker_fallback_and_cache(tmp_path, store):
-    fake, ctx = arch_laptop(tmp_path, store=store)
-    fake.programs = {"pacman"}
-    fake.set(("pacman", "-Q"), "openssl 3.3.1-1\nlibtiff 4.6.0-1\nvim 9.1.0-1\nzstd 1.5.6-1\n")
-    hits = []
+async def test_debsecan_on_debian_and_when_it_cant_answer(tmp_path):
+    fake, ctx = kali_laptop(tmp_path)
+    (tmp_path / "os-release").write_text("ID=debian\nVERSION_CODENAME=trixie\n")
+    fake.set(
+        ("debsecan", "--suite", "trixie", "--only-fixed"), "CVE-2024-9 curl (fixed, low urgency)\n"
+    )
+    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
+    assert s.status == "info" and s.data["suite"] == "trixie"
+    assert (
+        s.findings[0].detail
+        == "LOW URGENCY // fixed in Debian trixie, not in your repositories yet"
+    )
 
-    def tracker(request: httpx.Request) -> httpx.Response:
-        hits.append(str(request.url))
-        return httpx.Response(200, json=TRACKER)
+    fake.set(("debsecan", "--suite", "trixie", "--only-fixed"), "")
+    fake.calls.clear()
+    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
+    assert s.status == "ok" and s.summary == "NO FIXED VULNERABILITIES PENDING"
+    assert list(APT) not in fake.calls  # Nothing to look up.
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(tracker)) as http:
-        ctx.http = http
-        s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert hits == [TRACKER_URL]
-    assert s.data["source"] == "security.archlinux.org"
-    assert s.status == "crit" and s.summary == "3 VULNERABLE PACKAGES // 1 HIGH"
-    # zstd 1.5.6-1 has epoch 0, older than the fix 1:1.5.6-1.
-    assert texts(s) == [
-        "openssl 3.3.1-1 // CVE-2024-1111",
-        "libtiff 4.6.0-1 // CVE-2024-2222",
-        "zstd 1.5.6-1 // CVE-2024-5555",
+    (tmp_path / "os-release").write_text(KALI)
+    fake.set(DEBSECAN, (1, "", "debsecan: error: could not download vulnerability data"))
+    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
+    assert s.status == "unavailable" and s.summary.startswith("DEBSECAN FAILED")
+
+    fake.programs.discard("debsecan")
+    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
+    assert s.summary == "INSTALL debsecan // sudo apt install debsecan"
+
+
+# SSH from auth.log -------------------------------------------------------------------------------
+
+
+def test_auth_log_lines_in_both_formats():
+    stamp = datetime.fromtimestamp(NOW - 1800).astimezone()
+    iso = stamp.isoformat(timespec="microseconds")
+    classic = stamp.strftime("%b %e %H:%M:%S")
+    old = datetime.fromtimestamp(NOW - 3 * 86400).astimezone().isoformat()
+    text = "\n".join(
+        [
+            f"{iso} kali sshd-session[811]: Failed password for root from 45.155.205.9 port 4242 ssh2",
+            f"{classic} kali sshd[812]: Invalid user oracle from 45.155.205.9 port 4243",
+            f"{iso} kali sudo: kali : TTY=pts/0 ; PWD=/home/kali ; COMMAND=/usr/bin/apt",
+            f"{old} kali sshd[700]: Failed password for root from 1.2.3.4 port 1 ssh2",
+            "garbage line",
+        ]
+    )
+    entries = auth_log_entries(text, NOW)
+    assert [e["MESSAGE"] for e in entries] == [
+        "Failed password for root from 45.155.205.9 port 4242 ssh2",
+        "Invalid user oracle from 45.155.205.9 port 4243",
     ]
-    assert s.findings[0].detail == "HIGH // arbitrary code execution // fixed in 3.3.2-1"
-
-    def down(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("offline")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(down)) as http:
-        ctx.http = http
-        cached = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-        assert cached.summary == s.summary  # Cached for six hours.
-        ctx.clock.now += 7 * 3600
-        stale = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-        assert stale.summary == s.summary  # Stale data beats none when offline.
-        reset(store)  # Never clears caches...
-        Baseline(store).delete("cache.vulns.tracker")
-        gone = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert gone.status == "unavailable" and gone.summary == "SECURITY TRACKER UNREACHABLE"
+    assert abs(int(entries[0]["__REALTIME_TIMESTAMP"]) / 1e6 - (NOW - 1800)) < 1
 
 
-async def test_vercmp_has_the_last_word(tmp_path, store):
-    fake, ctx = arch_laptop(tmp_path, store=store)
-    fake.programs = {"pacman", "vercmp"}
-    fake.set(("pacman", "-Q"), "openssl 3.3.1-1\nlibtiff 4.6.0-1\n")
-    fake.set(("vercmp", "3.3.1-1", "3.3.2-1"), "1\n")  # Pretend pacman disagrees.
-    Baseline(store).set("cache.vulns.tracker", {"fetched_at": NOW, "groups": [
-        {**g, "fixed": g["fixed"] or "", "type": g.get("type", "")} for g in TRACKER[:3]
-    ]})  # fmt: skip
-    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert [f.text.split()[0] for f in s.findings] == ["libtiff"]
-    assert ["vercmp", "3.3.1-1", "3.3.2-1"] in fake.calls
-
-
-async def test_arch_audit_plain_output_and_debsecan(tmp_path):
-    fake, ctx = arch_laptop(tmp_path)
-    fake.set(ARCH_AUDIT, (1, "", "error: Found argument '--format'"))
-    fake.set(
-        ("arch-audit",),
-        "Package curl is affected by CVE-2018-1000300, CVE-2018-1000301. High risk!\n"
-        "Package libxml2 is affected by CVE-2024-25062. Medium risk! Update to 2.12.5-1!\n",
+async def test_ssh_falls_back_to_auth_log(tmp_path):
+    fake, ctx = kali_laptop(tmp_path)
+    hint = "Hint: You are currently not seeing messages from other users and the system.\n"
+    fake.set(SSH, (0, "", hint))
+    stamp = datetime.fromtimestamp(NOW - 600).astimezone().isoformat(timespec="microseconds")
+    (tmp_path / "auth.log").write_text(
+        "".join(
+            f"{stamp} kali sshd-session[9{i}]: Failed password for kali from 45.155.205.9 port {40000 + i} ssh2\n"
+            for i in range(3)
+        )
     )
-    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert texts(s) == ["curl // CVE-2018-1000300 +1", "libxml2 // CVE-2024-25062"]
+    s = by_id(await collect(None, ["ssh"], context=ctx))["ssh"]
+    assert s.data["source"] == "auth.log" and s.status == "warn"
+    assert s.summary == "3 FAILED SSH LOGINS // 1 SOURCE // SSHD ACTIVE"
 
-    fake.set(("arch-audit",), (1, "", "Cannot fetch data from the tracker"))
-    fake.programs = {"arch-audit", "debsecan"}
-    fake.set(
-        ("debsecan",),
-        "CVE-2024-0001 openssl (remotely exploitable, high urgency)\n"
-        "CVE-2024-0002 openssl (low urgency)\n"
-        "TEMP-0000001-ABCDEF bash\n",
-    )
-    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert s.data["source"] == "debsecan" and s.status == "crit"
-    assert texts(s) == ["openssl // CVE-2024-0001 +1", "bash // TEMP-0000001-ABCDEF"]
-
-    fake.programs = {"arch-audit"}
-    s = by_id(await collect(None, ["vulns"], context=ctx))["vulns"]
-    assert s.status == "unavailable" and s.summary.startswith("ARCH-AUDIT FAILED")
-
-
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [  # Mostly from pacman's own vercmp test suite.
-        ("1.5.0", "1.5.0", 0),
-        ("1.5.1", "1.5.0", 1),
-        ("1.5.1", "1.5", 1),
-        ("1.5.0-1", "1.5.0-2", -1),
-        ("1.5-1", "1.5.1-1", -1),
-        ("1.5", "1.5-1", 0),  # No release on one side: releases are ignored.
-        ("1.1-1", "1.0", 1),
-        ("1.5b-1", "1.5-1", -1),
-        ("1.5b", "1.5.1", -1),
-        ("1.0a", "1.0alpha", -1),
-        ("1.0rc", "1.0", -1),
-        ("1.5.a", "1.5", 1),
-        ("1.5.1", "1.5.b", 1),
-        ("1.5.b-1", "1.5.b", 0),
-        ("1.5-1", "1.5.b", -1),
-        ("2.0", "2_0", 0),
-        ("2.0a", "2.0.a", -1),
-        ("2___a", "2_a", 1),
-        ("1:1.0", "0:1.1", 1),
-        ("1:1.0-1", "0:1.1-1", 1),
-        ("0:1.0", "1.0", 0),
-        ("1:1.0", "1.1", 1),
-        ("1.10", "1.9", 1),
-        ("001", "1", 0),
-        ("6.10.2.arch1-1", "6.10.10.arch1-1", -1),
-    ],
-)
-def test_arch_version_compare(a, b, expected):
-    assert vercmp(a, b) == expected
-    assert vercmp(b, a) == -expected
+    (tmp_path / "auth.log").unlink()
+    s = by_id(await collect(None, ["ssh"], context=ctx))["ssh"]
+    assert s.status == "unavailable" and s.summary.endswith("JOIN adm")
 
 
 # Report ------------------------------------------------------------------------------------------
@@ -859,7 +820,7 @@ def due_now(rt, item):
 
 async def test_briefing_automation_end_to_end(make_runtime, mock, tmp_path):
     rt = make_runtime()
-    _, ctx = arch_laptop(tmp_path, store=rt.store)
+    _, ctx = kali_laptop(tmp_path, store=rt.store)
     rt.services["watchdog"] = ctx
     seen = []
 
@@ -889,7 +850,7 @@ async def test_briefing_with_instructions_asks_the_model_without_tools(
     make_runtime, mock, tmp_path
 ):
     rt = make_runtime()
-    _, ctx = arch_laptop(tmp_path, store=rt.store)
+    _, ctx = kali_laptop(tmp_path, store=rt.store)
     rt.services["watchdog"] = ctx
     item = rt.scheduler.create(
         "briefing",
@@ -933,7 +894,7 @@ async def test_tools(make_runtime, tmp_path):
     from bagley.tools.watchdog import security_check, system_health
 
     rt = make_runtime()
-    _, ctx = arch_laptop(tmp_path, store=rt.store)
+    _, ctx = kali_laptop(tmp_path, store=rt.store)
     rt.services["watchdog"] = ctx
     tool_ctx = rt.tool_context()
     result = json.loads(await system_health.invoke({"sections": ["battery", "disks"]}, tool_ctx))
@@ -984,7 +945,7 @@ def test_tools_register_on_linux_or_when_asked(config, monkeypatch):
 @pytest.fixture
 def client(make_runtime, tmp_path):
     rt = make_runtime()
-    _, ctx = arch_laptop(tmp_path, store=rt.store)
+    _, ctx = kali_laptop(tmp_path, store=rt.store)
     rt.services["watchdog"] = ctx
     with TestClient(create_app(rt), base_url="http://localhost") as c:
         c.runtime = rt
@@ -1036,9 +997,8 @@ def cli(monkeypatch, tmp_path):
     monkeypatch.delenv("NO_COLOR", raising=False)
     holder = {}
 
-    def make_context(store, http):
-        fake, ctx = arch_laptop(tmp_path / "sys-root", store=store)
-        ctx.http = http
+    def make_context(store):
+        fake, ctx = kali_laptop(tmp_path / "sys-root", store=store)
         holder["fake"] = fake
         return ctx
 

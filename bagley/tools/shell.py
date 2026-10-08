@@ -50,8 +50,7 @@ SANDBOX_ENV = {
 }
 NO_BWRAP = (
     "Not run: the sandbox is on but bubblewrap (bwrap) is not installed. Install it "
-    "(Arch: `sudo pacman -S bubblewrap`, Debian/Ubuntu: `sudo apt install bubblewrap`) or switch "
-    "the sandbox off in Settings."
+    "(`sudo apt install bubblewrap`) or switch the sandbox off in Settings."
 )
 
 # Runs the snippet with a clean traceback, then saves any matplotlib figures still open.

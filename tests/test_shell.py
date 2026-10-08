@@ -56,7 +56,7 @@ ZSH = shutil.which("zsh")
         ("Command: ls -la", "ls -la", ""),
         ("find . \\\n  -name '*.log'", "find . -name '*.log'", ""),
         ("echo '#not a comment' # but this is", "echo '#not a comment'", "but this is"),
-        ("1. sudo pacman -Syu", "sudo pacman -Syu", ""),
+        ("1. sudo apt full-upgrade", "sudo apt full-upgrade", ""),
         ("fd is faster than find on most systems.\nfd -e log", "fd -e log", ""),
         ("I can't help with that.", "", ""),
         ("", "", ""),
@@ -75,9 +75,9 @@ def test_parse_suggestion(raw, command, note):
             "fd -S +1G",
         ),
         (
-            "## Cause\n**fd** is not installed.\n\n**FIX:** `sudo pacman -S fd`",
+            "## Cause\n**fd** is not installed.\n\n**FIX:** `sudo apt install fd-find`",
             "Cause\nfd is not installed.",
-            "sudo pacman -S fd",
+            "sudo apt install fd-find",
         ),
         ("The disk is full.\nFIX: none", "The disk is full.", ""),
         (
@@ -188,7 +188,7 @@ def test_dangerous_commands_are_flagged(command):
         "find ~ -name '*.tmp' -delete",
         "kill -9 1234",
         "crontab -l",
-        "sudo -E pacman -Syu",
+        "sudo -E apt full-upgrade",
         'echo "unbalanced',
     ],
 )
@@ -201,18 +201,18 @@ def test_ordinary_commands_are_not_flagged(command):
 
 def test_system_facts(tmp_path):
     release = tmp_path / "os-release"
-    release.write_text('NAME="Arch Linux"\nPRETTY_NAME="Arch Linux"\nID=arch\n')
-    installed = {"pacman", "paru", "fdfind", "rg", "eza", "systemctl", "hyprctl"}
+    release.write_text('NAME="Kali GNU/Linux"\nPRETTY_NAME="Kali GNU/Linux Rolling"\nID=kali\n')
+    installed = {"apt", "pipx", "fdfind", "rg", "eza", "systemctl", "hyprctl"}
     facts = detect_facts(
         lambda name: f"/usr/bin/{name}" if name in installed else None,
         release,
         {"SHELL": "/usr/bin/zsh"},
     )
-    assert facts.os == "Arch Linux" and facts.shell == "zsh"
-    assert facts.package_managers == ("paru", "pacman")
+    assert facts.os == "Kali GNU/Linux Rolling" and facts.shell == "zsh"
+    assert facts.package_managers == ("apt", "pipx")
     assert facts.tools == ("fdfind", "rg", "eza", "systemctl", "hyprctl")
     described = facts.describe("zsh")
-    assert "OS: Arch Linux" in described and "Installed tools: fdfind, rg" in described
+    assert "OS: Kali GNU/Linux Rolling" in described and "Installed tools: fdfind, rg" in described
     missing = detect_facts(lambda name: None, tmp_path / "nope", {})
     assert missing.os and missing.tools == () and missing.package_managers == ()
 

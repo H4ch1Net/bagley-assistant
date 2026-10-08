@@ -1,5 +1,5 @@
 """What the watchdog has seen before: known devices, listening ports, Tailscale peers, and
-caches such as the Arch security tracker.
+the last full report.
 
 The first run records a baseline and reports ``BASELINE RECORDED``. Later runs flag anything
 missing from it as new. A new item is added to the baseline at once but stays flagged for
