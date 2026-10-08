@@ -79,6 +79,8 @@ class ServerConfig:
     searxng_url: str = ""
     token: str = ""
     allowed_hosts: list[str] = field(default_factory=list)
+    # Tailnet logins allowed through `tailscale serve` (its Tailscale-User-Login header).
+    tailscale_users: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).expanduser()
@@ -95,6 +97,8 @@ class ServerConfig:
         except ValueError as exc:
             raise SystemExit(f"BAGLEY_PORT must be a number, got {env['BAGLEY_PORT']!r}") from exc
         hosts = [h.strip() for h in env.get("BAGLEY_ALLOWED_HOSTS", "").split(",") if h.strip()]
+        logins = env.get("BAGLEY_TAILSCALE_USERS", "")
+        users = [u.strip().lower() for u in logins.split(",") if u.strip()]
         return cls(
             host=env.get("BAGLEY_HOST") or "127.0.0.1",
             port=port,
@@ -108,6 +112,7 @@ class ServerConfig:
             searxng_url=(env.get("BAGLEY_SEARXNG_URL") or "").rstrip("/"),
             token=env.get("BAGLEY_TOKEN") or "",
             allowed_hosts=hosts,
+            tailscale_users=users,
         )
 
     @property

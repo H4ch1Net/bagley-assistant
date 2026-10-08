@@ -61,7 +61,13 @@ MAX_UPLOAD_BYTES = 5_000_000
 
 class GuardMiddleware:
     """Blocks DNS rebinding (Host check), cross-site requests (Origin check) and, when a token is
-    configured, unauthenticated access."""
+    configured, unauthenticated access.
+
+    With ``BAGLEY_TAILSCALE_USERS`` set, requests for a non-loopback host name (the tailnet name
+    ``tailscale serve`` proxies) must also come from one of those tailnet logins, or carry the
+    token. ``tailscale serve`` connects from this machine and sets ``Tailscale-User-Login`` from
+    the caller's tailnet identity, replacing any value the caller sent. Nobody else can reach a
+    loopback-only port to forge it, and beyond loopback the token is required anyway."""
 
     def __init__(self, app: ASGIApp, config: ServerConfig) -> None:
         self.app = app
@@ -87,14 +93,14 @@ class GuardMiddleware:
         if origin and unsafe and urlsplit(origin).netloc.lower() != host.lower():
             await self._deny(scope, receive, send, 403, "Cross-origin request blocked.")
             return
-        if self.config.token and not self._authorized(scope, headers):
-            query = parse_qs(scope.get("query_string", b"").decode())
-            supplied = (query.get("token") or [""])[0]
-            if (
-                scope["type"] == "http"
-                and supplied
-                and hmac.compare_digest(supplied, self.config.token)
-            ):
+        token_ok = bool(self.config.token) and self._authorized(scope, headers)
+        if self.config.tailscale_users and hostname.lower() not in LOOPBACK_HOSTS and not token_ok:
+            login = headers.get("tailscale-user-login", "").strip().lower()
+            if login not in self.config.tailscale_users and not self._query_token(scope):
+                await self._deny(scope, receive, send, 403, "This tailnet user is not allowed.")
+                return
+        if self.config.token and not token_ok:
+            if scope["type"] == "http" and self._query_token(scope):
                 await self._set_cookie_redirect(send, scope.get("path", "/"))
                 return
             await self._deny(
@@ -120,6 +126,12 @@ class GuardMiddleware:
 
     def _matches(self, supplied: str) -> bool:
         return hmac.compare_digest(supplied.encode(), self.config.token.encode())
+
+    def _query_token(self, scope: Scope) -> bool:
+        """A valid ``?token=`` (the link ``bagley`` prints), swapped for a cookie."""
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        supplied = (query.get("token") or [""])[0]
+        return bool(self.config.token and supplied) and self._matches(supplied)
 
     async def _set_cookie_redirect(self, send: Send, path: str) -> None:
         cookie = f"{TOKEN_COOKIE}={self.config.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
