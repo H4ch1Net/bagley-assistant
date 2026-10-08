@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -13,7 +13,7 @@ from bagley.tools import shell as shell_tools
 from bagley.tools.shell import SANDBOX_ENV, bwrap_args
 from tests.mock_llm import Reply
 
-HOME = Path("/home/user")
+HOME = PurePosixPath("/home/user")
 WORKSPACE = HOME / ".bagley" / "workspace"
 REAL_WHICH = shutil.which
 

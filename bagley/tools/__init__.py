@@ -153,16 +153,20 @@ _JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean", 
 def _schema_for(annotation: Any) -> tuple[dict[str, Any], bool]:
     """Return a JSON schema for ``annotation`` and whether ``None`` is allowed."""
     description = ""
-    if get_origin(annotation) is Annotated:
-        annotation, *extras = get_args(annotation)
-        description = next((e for e in extras if isinstance(e, str)), "")
     optional = False
-    origin = get_origin(annotation)
-    if origin in (Union, types.UnionType):
-        members = [a for a in get_args(annotation) if a is not type(None)]
-        optional = len(members) < len(get_args(annotation))
-        annotation = members[0] if len(members) == 1 else str
+    # Python 3.10 wraps ``Annotated[int | None, ...] = None`` in one more Optional, so peel
+    # Annotated and Optional layers in any order.
+    while True:
         origin = get_origin(annotation)
+        if origin is Annotated:
+            annotation, *extras = get_args(annotation)
+            description = description or next((e for e in extras if isinstance(e, str)), "")
+        elif origin in (Union, types.UnionType):
+            members = [a for a in get_args(annotation) if a is not type(None)]
+            optional = optional or len(members) < len(get_args(annotation))
+            annotation = members[0] if len(members) == 1 else str
+        else:
+            break
     if origin is Literal:
         values = list(get_args(annotation))
         schema: dict[str, Any] = {

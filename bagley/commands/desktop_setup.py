@@ -57,7 +57,7 @@ class Setup:
 
     def short(self, path: Path) -> str:
         try:
-            return "~/" + str(path.relative_to(self.home))
+            return "~/" + path.relative_to(self.home).as_posix()
         except ValueError:
             return str(path)
 
@@ -189,7 +189,11 @@ def install(
     src: Path | None = None,
 ) -> Report:
     setup = Setup(
-        home=home, src=src or files_dir(), dry_run=dry_run, edit=edit, env=env or os.environ
+        home=home,
+        src=src or files_dir(),
+        dry_run=dry_run,
+        edit=edit,
+        env=os.environ if env is None else env,
     )
     chosen = only or list(COMPONENTS)
     ipc = DEFAULT_IPC

@@ -67,6 +67,7 @@ def test_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     assert cli.main(["desktop", "install", "--only", "zsh"]) == 0
     out = capsys.readouterr().out
     assert "[OK]  zsh -> ~/.local/share/bagley/zsh" in out

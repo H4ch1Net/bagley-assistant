@@ -198,7 +198,8 @@ def make_runner(up: set[str]):
 
     async def runner(argv: list[str], timeout: float) -> tuple[int, str]:
         host = argv[-1]
-        return (0, "time=1.20 ms") if host in up else (1, "")
+        reply = f"64 bytes from {host}: icmp_seq=1 ttl=64 time=1.20 ms"
+        return (0, reply) if host in up else (1, "")
 
     return runner
 
