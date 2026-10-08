@@ -19,6 +19,7 @@ import * as routines from "./panels/routines.js";
 import * as study from "./panels/study.js";
 import * as tools from "./panels/tools.js";
 import * as voicePanel from "./panels/voice.js";
+import * as watchdog from "./panels/watchdog.js";
 
 export { pullModel, RECOMMENDED_MODELS, savePrefs } from "./settings-kit.js";
 
@@ -36,6 +37,7 @@ const TABS = [
   { id: "routines", label: "Routines", icon: "workflow", panel: routines },
   { group: "Security" },
   { id: "tools", label: "Tools & permissions", icon: "shield-check", panel: tools },
+  { id: "watchdog", label: "System watchdog", icon: "radar", panel: watchdog },
   { id: "audit", label: "Audit log", icon: "list", panel: audit },
   { group: "Devices" },
   { id: "notifications", label: "Notifications", icon: "bell", panel: notifications },

@@ -113,6 +113,8 @@ const TOOL_ICONS = {
   list_decks: "graduation-cap",
   study_material: "book-open",
   start_study_session: "timer",
+  system_health: "radar",
+  security_check: "shield-alert",
 };
 const CATEGORY_ICONS = {
   web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench",

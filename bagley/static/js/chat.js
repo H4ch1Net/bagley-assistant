@@ -6,6 +6,7 @@ import { renderMarkdown, setMarkdown } from "./markdown.js";
 import { state, toolIcon, toolInfo, toolSummary } from "./state.js";
 import { announce, toast } from "./ui.js";
 import { $, clockTime, copyText, el, formatDuration, icon } from "./util.js";
+import { reportView } from "./watchdog.js";
 
 const thread = () => $("#thread");
 const list = () => $("#messages");
@@ -31,7 +32,7 @@ export function groupTurns(messages) {
     }
     current.messages.push(m);
     if (m.reasoning) current.parts.push({ type: "reasoning", text: m.reasoning });
-    if (m.content) current.parts.push({ type: "text", text: m.content, interrupted: m.meta?.interrupted });
+    if (m.content) current.parts.push({ type: "text", text: m.content, interrupted: m.meta?.interrupted, watchdog: m.meta?.watchdog });
     for (const call of m.tool_calls || []) current.parts.push({ type: "tool", call, result: results.get(call.id) });
   }
   return turns;
@@ -193,6 +194,20 @@ function metaLine(meta = {}) {
 }
 
 /** "// H4CH1 // qwen3:14b": which machine and model answered. */
+const ORIGINS = { overlay: "OVERLAY", shell: "SHELL", voice: "VOICE", phone: "PHONE", cli: "TERMINAL", routine: "ROUTINE" };
+
+/** Where a message came from when it wasn't typed here: "OVERLAY // KITTY // ~/code - nvim". */
+export function originLine(meta = {}) {
+  const ctx = meta?.context || {};
+  const where = [ctx.app, ctx.window_title].filter(Boolean).map((s) => s.replace(/\s+/g, " ").trim());
+  const extra = [ctx.selection ? "SELECTION" : "", ctx.clipboard ? "CLIPBOARD" : ""].filter(Boolean);
+  const source = ORIGINS[meta?.source];
+  if (!source && !where.length && !extra.length) return null;
+  const parts = [source, ...where.map((w, i) => (i === 0 && ctx.app ? w.toUpperCase() : w)), ...extra].filter(Boolean);
+  const title = [ctx.selection && `Selection: ${ctx.selection}`, ctx.clipboard && `Clipboard: ${ctx.clipboard}`].filter(Boolean).join("\n\n");
+  return { text: parts.join(" // "), title };
+}
+
 function nodeLine(meta = {}) {
   return [meta.machine, meta.model].filter(Boolean).map((b) => `// ${b}`).join(" ");
 }
@@ -266,7 +281,9 @@ export class Chat {
 
   userTurn(message, { pending = false } = {}) {
     const images = message.meta?.images || [];
+    const origin = originLine(message.meta);
     const node = el("article", { class: `turn turn-user${pending ? " pending" : ""}`, dataset: { id: message.id ?? "" } },
+      origin ? el("div", { class: "bubble-origin", title: origin.title, text: origin.text }) : null,
       images.length
         ? el("div", { class: "bubble-images" }, ...images.map((name) => el("a", { href: `/api/captures/${encodeURIComponent(name)}`, target: "_blank", rel: "noopener" },
             el("img", { src: `/api/captures/${encodeURIComponent(name)}`, alt: "Attached image", loading: "lazy" }))))
@@ -296,7 +313,7 @@ export class Chat {
     for (const part of turn.parts) {
       if (part.type === "reasoning") body.append(reasoningBlock(part.text).details);
       else if (part.type === "text") {
-        body.append(proseBlock(part.text));
+        body.append(part.watchdog?.sections ? reportView(part.watchdog, { compact: true }) : proseBlock(part.text));
         text += (text ? "\n\n" : "") + part.text;
         if (part.interrupted) body.append(el("div", { class: "notice" }, icon("info", "icon-sm"), el("span", { text: "Stopped before finishing." })));
       } else if (part.type === "tool") {

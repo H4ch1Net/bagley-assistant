@@ -312,3 +312,59 @@ def test_automation_form_keeps_draft_labels_and_toasts(page, stack):
     expect(toast).to_be_visible()
     page.click("#tab-automations")
     expect(page.get_by_label("Name")).to_have_value("")
+
+
+REPORT = {
+    "title": "MORNING BRIEFING",
+    "title_line": "MORNING BRIEFING // H4CH1",
+    "host": "h4ch1",
+    "created_at": 1791446400,
+    "status": "crit",
+    "level": "critical",
+    "headline": "1 CRITICAL // 1 WARNING",
+    "counts": {"ok": 1, "info": 0, "warn": 1, "crit": 1, "unavailable": 0},
+    "sections": [
+        {"id": "services", "title": "Services", "status": "crit", "summary": "1 FAILED",
+         "findings": [{"severity": "crit", "text": "sshd.service FAILED", "detail": "OpenSSH Daemon"}], "data": {}},
+        {"id": "disks", "title": "Disks", "status": "ok", "summary": "3 FILESYSTEMS OK", "findings": [], "data": {}},
+        {"id": "ports", "title": "Ports", "status": "warn", "summary": "1 NEW",
+         "findings": [{"severity": "warn", "text": "NEW TCP 0.0.0.0:8080", "detail": "python3"}], "data": {}},
+    ],
+}  # fmt: skip
+
+
+def test_watchdog_panel_and_briefing_card(page, stack):
+    from bagley.watchdog.baseline import Baseline
+    from bagley.watchdog.report import LAST_REPORT
+
+    store = stack.runtime.store
+    Baseline(store).set(LAST_REPORT, REPORT, REPORT["created_at"])
+    chat = store.create_conversation("Morning briefing")
+    store.add_message(chat["id"], "user", "what's this error?",
+                      meta={"source": "overlay", "context": {"app": "kitty", "window_title": "~/code - nvim", "selection": "E501"}})  # fmt: skip
+    store.add_message(chat["id"], "assistant", "# MORNING BRIEFING", meta={"watchdog": REPORT})
+
+    page.keyboard.press("Control+,")
+    page.click("#tab-watchdog")
+    report = page.locator("#settings-panel .wd")
+    expect(report).to_contain_text("1 CRITICAL // 1 WARNING")
+    expect(report).to_contain_text("OK 01 // WARN 01 // CRIT 01 // N/A 00")
+    expect(report.locator("details[data-section='services']")).to_have_attribute("open", "")
+    expect(report.locator(".wd-finding.crit")).to_contain_text("sshd.service FAILED")
+    page.click("#settings-panel button:has-text('Enable morning briefing')")
+    expect(page.locator(".toast >> text=Morning briefing")).to_be_visible()
+    expect(page.locator("#settings-panel button:has-text('Briefing scheduled')")).to_be_disabled()
+    page.click("#tab-automations")
+    expect(
+        page.locator(".list-item.automation").filter(has_text="Morning briefing")
+    ).to_be_visible()
+    page.keyboard.press("Escape")
+
+    page.reload()
+    page.wait_for_selector(".conn .dot.ok")
+    page.locator(".conv-link").filter(has_text="Morning briefing").click()
+    expect(page.locator(".turn-user .bubble-origin")).to_have_text(
+        "OVERLAY // KITTY // ~/code - nvim // SELECTION"
+    )
+    expect(page.locator(".turn-assistant .wd")).to_contain_text("MORNING BRIEFING // H4CH1")
+    expect(page.locator(".turn-assistant .wd .wd-run")).to_be_hidden()
