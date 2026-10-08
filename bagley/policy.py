@@ -28,6 +28,22 @@ CHANGES_STATE = {"remember", "forget", "set_reminder", "cancel_automation", "mak
 URL = re.compile(r"https?://[^\s\"'<>)\]]+")
 
 
+def reads_private(*names: str) -> None:
+    """Mark tools that read the user's own data (files, notes, system state). After web content
+    has entered an unattended run, they are refused so injected text can't exfiltrate it."""
+    READS_PRIVATE.update(names)
+
+
+def brings_web(*names: str) -> None:
+    """Mark tools whose results contain text from the internet."""
+    BRINGS_WEB.update(names)
+
+
+def changes_state(*names: str) -> None:
+    """Mark tools that change saved state (records, settings). Unattended runs can't use them."""
+    CHANGES_STATE.update(names)
+
+
 @dataclass
 class UnattendedPolicy:
     web_content: bool = False  # Untrusted text from the web is in the context.
