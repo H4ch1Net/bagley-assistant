@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="ctos">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ctOS Terminal</title><link rel="stylesheet" href="../tokens.css"></head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;300;400;500;600;700&display=swap">
+<style>*{box-sizing:border-box}html,body{margin:0;background:var(--background);color:var(--textPrimary);font-family:var(--font-mono)}body{padding:16px}.cap{font-size:12px;color:var(--textSecondary)}
+
+.desk{position:relative;padding:12px;background:var(--background) url(https://raw.githubusercontent.com/TSM-061/ctOS/main/extras/wallpapers/wallpaper-v1.png) 60% 40%/1800px auto}
+.win{border:2px solid;border-image:linear-gradient(45deg,var(--ctosGray),var(--textSecondary)) 1;background:rgba(18,18,18,.85);backdrop-filter:blur(6px);box-shadow:0 0 4px #000000ee;color:var(--term-fg);font-size:16px;line-height:1.25}
+.tabs{display:flex;gap:0;padding:6px 0 0;font-size:16px}.tab{padding:0 10px;background:var(--term-selection);color:var(--textSecondary);clip-path:polygon(0 0,calc(100% - 8px) 0,100% 100%,8px 100%)}
+.tab.on{background:var(--term-tab-active);color:var(--background);font-weight:700}
+pre{margin:0;padding:14px;font:inherit;white-space:pre}
+.d{color:var(--textSecondary)}.g{color:var(--textPrimaryDim)}.w{color:#fff}.ok{color:var(--success)}.err{color:var(--error)}.os{color:var(--ctosGray)}.str{color:var(--ansi10)}
+.r{float:right;color:var(--textSecondary)}
+.scroll{overflow-x:auto}
+</style>
+<div class="scroll"><div class="desk"><div class="win">
+<div class="tabs"><span class="tab on"> 1:zsh </span><span class="tab"> 2:lazygit </span></div>
+<pre>
+<span class="d">┌─[ </span><span class="w">ctOS</span><span class="d"> ]────────────────────────────────────────</span>
+<span class="d">│</span> <span class="g">▨ h4ch1@b1t</span>   <span class="ok">● ONLINE</span>
+<span class="d">│</span> <span class="d">UPTIME</span> <span class="g">2 hours, 14 minutes</span>
+<span class="d">│</span> <span class="d">TIP</span>    <span class="g">SUPER+R  launcher</span>
+<span class="d">└──────────────────────────────────────────────────</span>
+
+<span class="os">OS</span> <span class="g">~/dev/</span><span class="w">personal</span> <span class="ok">main</span><span class="r">16:43:07</span>
+<span class="ok">❯</span> git commit -m <span class="str">"bar: clickable workspaces"</span>
+[main 4e1c2aa] bar: clickable workspaces
+
+<span class="os">OS</span> <span class="g">~/dev/</span><span class="w">personal</span> <span class="ok">main</span><span class="r"><span class="err">✘ 2</span>  16:43:21</span>
+<span class="err">❯</span> ls missing
+</pre></div></div></div>
+<p class="cap">The distro icon and git branch glyph come from the Nerd Font and are shown here as "OS" and plain text.</p>
+
+</body>
+</html>
