@@ -469,3 +469,48 @@ def test_presets_and_testing_a_key_before_saving(make_runtime, fake):
         client.post("/api/machines/test", json={**body, "api_key": ""})
     keys = [h.get("x-api-key") for h in fake.model_headers]
     assert keys == ["sk-new", "sk-saved", "sk-env"]  # Typed, then saved, then the environment.
+
+
+async def test_claude_is_the_default_model_when_none_is_chosen(make_runtime, fake):
+    rt = make_runtime(
+        env={"ANTHROPIC_API_KEY": "sk-env"},
+        provider="anthropic",
+        base_url="https://api.anthropic.com",
+        model="",
+    )
+    prefs, _ = rt.preferences()
+    assert await rt.resolve_model(await rt.provider(), prefs) == "claude-opus-5-5"
+    rt.update_preferences(
+        {"machines": [{"id": "claude", "name": "Claude", "role": "cloud", "provider": "anthropic",
+                       "base_url": "https://api.anthropic.com"}], "routing": "claude"}
+    )  # fmt: skip
+    prefs, _ = rt.preferences()
+    route = await rt.router.choose(prefs, "chat")
+    assert (route.machine.id, route.model) == ("claude", "claude-opus-5-5")
+    vision = await rt.router.choose(prefs, "vision")
+    assert vision.model == "claude-opus-5-5"
+
+
+async def test_no_key_anywhere_is_a_clear_error(monkeypatch, tmp_path):
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_PROFILE",
+        "ANTHROPIC_CONFIG_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # No `ant auth login` profile either.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    provider = ClaudeProvider("https://api.anthropic.com", "")
+    with pytest.raises(LLMError, match="No Anthropic API key"):
+        await provider.list_models()
+    with pytest.raises(LLMError, match="No Anthropic API key"):
+        await collect(provider, HISTORY, model="claude-opus-5-5")
+    assert (await provider.capabilities("claude-opus-5-5")).tools
+    await provider.aclose()
+
+    monkeypatch.setenv("ANTHROPIC_PROFILE", "work")  # A named profile that doesn't exist.
+    provider = ClaudeProvider("https://api.anthropic.com", "")
+    with pytest.raises(LLMError, match="No Anthropic API key"):
+        await provider.list_models()
+    await provider.aclose()

@@ -255,6 +255,8 @@ class Router:
             return await self.rt.resolve_model(provider, prefs)
         if machine.model:
             return machine.model
+        if provider.default_model:
+            return provider.default_model
         from bagley.knowledge import is_embedding_model
 
         models = [m for m in await provider.list_models() if not is_embedding_model(m.name)]
@@ -270,7 +272,9 @@ class Router:
     ) -> str:
         if machine.vision_model:
             return machine.vision_model
-        preferred = machine.model or (prefs.model if machine.is_local else "")
+        preferred = (
+            machine.model or (prefs.model if machine.is_local else "") or provider.default_model
+        )
         if preferred and (await provider.capabilities(preferred)).vision:
             return preferred
         models = await provider.list_models()

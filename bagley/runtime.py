@@ -172,6 +172,8 @@ class Runtime:
     async def resolve_model(self, provider: Provider, prefs: Preferences) -> str:
         if prefs.model:
             return prefs.model
+        if provider.default_model:
+            return provider.default_model
         models = await provider.list_models()
         if not models:
             hint = (

@@ -85,6 +85,22 @@ _IMAGE_TYPES = {
 }
 
 
+def missing_key(exc: Exception) -> LLMError | None:
+    """No usable credentials: the SDK raises TypeError at request time when it finds no key,
+    token or profile, and CredentialsError when a named profile is missing or broken."""
+    credentials = getattr(anthropic, "CredentialsError", ())
+    if (isinstance(exc, TypeError) and "authentication" in str(exc)) or (
+        credentials and isinstance(exc, credentials)
+    ):
+        return LLMError(
+            "No Anthropic API key.",
+            hint="Add the key under Settings → Model & machines, or set ANTHROPIC_API_KEY where "
+            "Bagley runs.",
+            status=401,
+        )
+    return None
+
+
 def matches(model: str, prefixes: tuple[str, ...]) -> bool:
     return any(model == p or model.startswith(p + "-") for p in prefixes)
 
@@ -177,6 +193,7 @@ def after_fallback(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class ClaudeProvider(Provider):
     kind = "anthropic"
     history_tokens = HISTORY_TOKENS
+    default_model = DEFAULT_MODEL
 
     def __init__(
         self, base_url: str = "", api_key: str = "", *, transport: Any = None, client: Any = None
@@ -201,7 +218,7 @@ class ClaudeProvider(Provider):
             if anthropic is None:
                 raise LLMError(
                     "Claude support isn't installed.",
-                    hint="Install it with: pip install 'bagley[claude]' (the anthropic package).",
+                    hint="Install the anthropic package: pip install 'anthropic>=1.9'.",
                 )
             kwargs: dict[str, Any] = {"max_retries": 1, "timeout": 600.0}
             if self.api_key:
@@ -210,12 +227,8 @@ class ClaudeProvider(Provider):
                 kwargs["base_url"] = self.base_url
             try:
                 self._sdk_client = anthropic.AsyncAnthropic(**kwargs)
-            except anthropic.AnthropicError as exc:
-                raise LLMError(
-                    "No Anthropic API key.",
-                    hint="Add the key under Settings → Model & machines, or set ANTHROPIC_API_KEY "
-                    "where Bagley runs.",
-                ) from exc
+            except (TypeError, anthropic.AnthropicError) as exc:
+                raise missing_key(exc) or exc from exc
         return self._sdk_client
 
     # Models -----------------------------------------------------------------------------------
@@ -230,6 +243,8 @@ class ClaudeProvider(Provider):
             models = [m async for m in client.models.list(limit=100)]
         except anthropic.APIError as exc:
             raise self._error(exc, "") from exc
+        except (TypeError, anthropic.AnthropicError) as exc:
+            raise missing_key(exc) or exc from exc
         return [
             ModelInfo(name=m.id, family=getattr(m, "display_name", "") or "claude") for m in models
         ]
@@ -241,7 +256,7 @@ class ClaudeProvider(Provider):
             try:
                 info = await client.models.retrieve(model)
                 context = getattr(info, "max_input_tokens", None)
-            except anthropic.APIError:
+            except (anthropic.AnthropicError, TypeError):
                 pass  # Unknown here; the request itself will say what's wrong.
             self._caps[model] = ModelCapabilities(
                 tools=True, thinking=matches(model, ADAPTIVE), vision=True, context_length=context
@@ -330,6 +345,8 @@ class ClaudeProvider(Provider):
                 params = plain  # Decided before any output, so a retry is safe.
             except anthropic.APIError as exc:
                 raise self._error(exc, model) from exc
+            except (TypeError, anthropic.AnthropicError) as exc:
+                raise missing_key(exc) or exc from exc
 
     async def _stream(
         self, client: Any, params: dict[str, Any], model: str

@@ -103,6 +103,7 @@ class Provider(ABC):
     kind = "base"
     supports_pull = False
     history_tokens = 0  # A bigger history budget than the context setting, for hosted models.
+    default_model = ""  # Used when no model is chosen, instead of the first one listed.
 
     def __init__(
         self,
