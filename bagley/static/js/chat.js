@@ -6,6 +6,7 @@ import { renderMarkdown, setMarkdown } from "./markdown.js";
 import { state, toolIcon, toolInfo, toolSummary } from "./state.js";
 import { announce, toast } from "./ui.js";
 import { $, clockTime, copyText, el, formatDuration, icon } from "./util.js";
+import { reportView } from "./watchdog.js";
 
 const thread = () => $("#thread");
 const list = () => $("#messages");
@@ -31,7 +32,7 @@ export function groupTurns(messages) {
     }
     current.messages.push(m);
     if (m.reasoning) current.parts.push({ type: "reasoning", text: m.reasoning });
-    if (m.content) current.parts.push({ type: "text", text: m.content, interrupted: m.meta?.interrupted });
+    if (m.content) current.parts.push({ type: "text", text: m.content, interrupted: m.meta?.interrupted, watchdog: m.meta?.watchdog });
     for (const call of m.tool_calls || []) current.parts.push({ type: "tool", call, result: results.get(call.id) });
   }
   return turns;
@@ -100,6 +101,7 @@ function diffStat(diff) {
 function toolExtras(card, detail, ui) {
   if (!ui || card.querySelector(".tool-bar")) return;
   const bar = el("div", { class: "tool-bar" });
+  if (ui.sandboxed) bar.append(el("span", { class: "badge badge-ok", title: "Ran inside the bubblewrap sandbox", text: "bwrap" }));
   if (ui.diff) {
     const { add, del } = diffStat(ui.diff);
     bar.append(el("span", { class: "diffstat" }, el("span", { class: "add", text: `+${add}` }), el("span", { class: "del", text: `−${del}` })));
@@ -158,12 +160,12 @@ export function toolCard({ id, name, args, state: initial = "running", result, d
     set(next, { result: text, duration: ms, ui: extras } = {}) {
       card.dataset.state = next;
       statusEl.replaceChildren();
-      if (next === "running") statusEl.append(el("span", { class: "spinner" }));
-      else if (next === "approval") statusEl.append(el("span", { text: "waiting" }));
-      else if (next === "ok") statusEl.append(icon("check", "icon-sm"), el("span", { text: ms !== undefined ? formatDuration(ms) : "" }));
-      else if (next === "denied") statusEl.append(el("span", { text: "declined" }));
+      if (next === "running") statusEl.append(el("span", { class: "spinner" }), el("span", { text: "exec" }));
+      else if (next === "approval") statusEl.append(el("span", { text: "await" }));
+      else if (next === "ok") statusEl.append(el("span", { text: `ok${ms !== undefined ? ` ${formatDuration(ms)}` : ""}` }));
+      else if (next === "denied") statusEl.append(el("span", { text: "denied" }));
       else if (next === "cancelled") statusEl.append(el("span", { text: "cancelled" }));
-      else statusEl.append(icon("circle-x", "icon-sm"), el("span", { text: "failed" }));
+      else statusEl.append(el("span", { text: "fail" }));
       if (text !== undefined) {
         resultPre.textContent = prettyResult(text);
         resultWrap.hidden = false;
@@ -186,10 +188,28 @@ function turnFoot(actions, meta) {
 
 function metaLine(meta = {}) {
   const bits = [];
-  if (meta.model) bits.push(meta.model);
   if (meta.tokens_per_second) bits.push(`${Math.round(meta.tokens_per_second)} tok/s`);
   if (meta.duration_ms) bits.push(formatDuration(meta.duration_ms));
   return bits.join(" · ");
+}
+
+/** "// H4CH1 // qwen3:14b": which machine and model answered. */
+const ORIGINS = { overlay: "OVERLAY", shell: "SHELL", voice: "VOICE", phone: "PHONE", cli: "TERMINAL", routine: "ROUTINE" };
+
+/** Where a message came from when it wasn't typed here: "OVERLAY // KITTY // ~/code - nvim". */
+export function originLine(meta = {}) {
+  const ctx = meta?.context || {};
+  const where = [ctx.app, ctx.window_title].filter(Boolean).map((s) => s.replace(/\s+/g, " ").trim());
+  const extra = [ctx.selection ? "SELECTION" : "", ctx.clipboard ? "CLIPBOARD" : ""].filter(Boolean);
+  const source = ORIGINS[meta?.source];
+  if (!source && !where.length && !extra.length) return null;
+  const parts = [source, ...where.map((w, i) => (i === 0 && ctx.app ? w.toUpperCase() : w)), ...extra].filter(Boolean);
+  const title = [ctx.selection && `Selection: ${ctx.selection}`, ctx.clipboard && `Clipboard: ${ctx.clipboard}`].filter(Boolean).join("\n\n");
+  return { text: parts.join(" // "), title };
+}
+
+function nodeLine(meta = {}) {
+  return [meta.machine, meta.model].filter(Boolean).map((b) => `// ${b}`).join(" ");
 }
 
 // Chat -------------------------------------------------------------------------------------------
@@ -221,6 +241,7 @@ export class Chat {
 
     const on = (type, fn) => socket.on(type, (ev) => fn.call(this, ev));
     on("run.start", this.onRunStart);
+    on("model", this.onModel);
     on("status", this.onStatus);
     on("reasoning.delta", this.onReasoning);
     on("text.delta", this.onText);
@@ -259,7 +280,14 @@ export class Chat {
   }
 
   userTurn(message, { pending = false } = {}) {
+    const images = message.meta?.images || [];
+    const origin = originLine(message.meta);
     const node = el("article", { class: `turn turn-user${pending ? " pending" : ""}`, dataset: { id: message.id ?? "" } },
+      origin ? el("div", { class: "bubble-origin", title: origin.title, text: origin.text }) : null,
+      images.length
+        ? el("div", { class: "bubble-images" }, ...images.map((name) => el("a", { href: `/api/captures/${encodeURIComponent(name)}`, target: "_blank", rel: "noopener" },
+            el("img", { src: `/api/captures/${encodeURIComponent(name)}`, alt: "Attached image", loading: "lazy" }))))
+        : null,
       el("div", { class: "bubble", text: message.content }),
     );
     rawText.set(node, message.content);
@@ -270,22 +298,22 @@ export class Chat {
     return node;
   }
 
-  assistantShell() {
+  assistantShell(meta = {}) {
     const body = el("div", { class: "turn-body" });
     const node = el("article", { class: "turn turn-assistant" },
-      el("div", { class: "turn-head" }, avatarGlyph(24), el("span", { class: "who", text: "Bagley" })),
+      el("div", { class: "turn-head" }, avatarGlyph(20), el("span", { class: "who", text: "Bagley" }), el("span", { class: "node", text: nodeLine(meta) })),
       body,
     );
     return { node, body };
   }
 
   assistantTurn(turn) {
-    const { node, body } = this.assistantShell();
+    const { node, body } = this.assistantShell(turn.messages[turn.messages.length - 1]?.meta);
     let text = "";
     for (const part of turn.parts) {
       if (part.type === "reasoning") body.append(reasoningBlock(part.text).details);
       else if (part.type === "text") {
-        body.append(proseBlock(part.text));
+        body.append(part.watchdog?.sections ? reportView(part.watchdog, { compact: true }) : proseBlock(part.text));
         text += (text ? "\n\n" : "") + part.text;
         if (part.interrupted) body.append(el("div", { class: "notice" }, icon("info", "icon-sm"), el("span", { text: "Stopped before finishing." })));
       } else if (part.type === "tool") {
@@ -339,14 +367,16 @@ export class Chat {
 
   // Sending ----------------------------------------------------------------------------------
 
-  send(text) {
-    if (!this.socket.send({ type: "chat", text, conversation_id: state.activeId })) {
+  send(text, { images = [], mode = null } = {}) {
+    const message = { type: "chat", text, conversation_id: state.activeId, images };
+    if (mode) message.conversation_mode = mode;
+    if (!this.socket.send(message)) {
       toast("Not connected to Bagley's server. Reconnecting…", { type: "error" });
       this.socket.reconnectNow();
       return false;
     }
     this.showEmpty(false);
-    const pending = this.userTurn({ content: text }, { pending: true });
+    const pending = this.userTurn({ content: text, meta: { images } }, { pending: true });
     list().append(pending);
     this.pendingUser = pending;
     this.beginRun(state.activeId);
@@ -432,6 +462,16 @@ export class Chat {
 
   isVisible() {
     return this.live && this.live.conversationId === state.activeId;
+  }
+
+  /** Whether a tool call's card (and its approval prompt) is on screen. */
+  hasCard(id) {
+    return Boolean(this.live?.cards.has(id) && this.isVisible());
+  }
+
+  onModel(ev) {
+    const node = this.live?.node.querySelector(".turn-head .node");
+    if (node) node.textContent = nodeLine(ev);
   }
 
   onRunStart(ev) {
@@ -548,7 +588,7 @@ export class Chat {
     };
     const allow = el("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => decide("allow") }, icon("check", "icon-sm"), "Allow");
     const box = el("div", { class: "approval", role: "group", "aria-label": "Approval needed" },
-      el("p", {}, el("strong", { text: "Allow this action? " }), `Bagley wants to ${summary.charAt(0).toLowerCase()}${summary.slice(1)}.`),
+      el("p", {}, el("strong", {}, el("span", { class: "barcode", "aria-hidden": "true" }), "Allow this action? "), `Bagley wants to ${summary.charAt(0).toLowerCase()}${summary.slice(1)}.`),
       el("button", { class: "btn btn-sm btn-ghost", type: "button", text: "Deny", onclick: () => decide("deny") }),
       el("button", { class: "btn btn-sm", type: "button", text: `Always allow ${ev.call.name}`, title: "Until you reload the page", onclick: () => decide("always") }),
       allow,
@@ -556,11 +596,24 @@ export class Chat {
     );
     card.card.append(box);
     card.approval = box;
+    if (["run_routine", "set_up_scene"].includes(ev.call.name)) this.showRoutineSteps(box, ev.call.arguments.name);
     this.follow();
     // Only take focus when the user isn't typing somewhere, so a keystroke can't approve.
     const active = document.activeElement;
     if (this.stick && (!active || active === document.body || thread().contains(active))) allow.focus({ preventScroll: true });
     announce(`Bagley needs your approval to ${summary}.`);
+  }
+
+  /** A routine's approval lists the exact steps it will run. */
+  async showRoutineSteps(box, name) {
+    if (!name) return;
+    try {
+      const routine = await api.get(`/api/routines/${encodeURIComponent(name)}`);
+      const { stepList } = await import("./routines.js");
+      box.querySelector(".approval-args")?.replaceWith(el("div", { class: "approval-args" }, stepList(routine.steps)));
+    } catch {
+      /* Unknown routine: the tool reports it when it runs. */
+    }
   }
 
   onApprovalResult(ev) {
@@ -673,6 +726,7 @@ export class Chat {
       onStart: () => this.setStatus("speaking"),
       onWord: () => this.avatars.pulse(0.8),
       onEnd: () => !state.run && this.setStatus("idle"),
+      onError: (err) => toast(`Couldn't speak: ${err.message}`, { type: "error" }),
     });
   }
 

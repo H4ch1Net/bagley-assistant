@@ -174,7 +174,7 @@ class KnowledgeBase:
     def folders(self) -> list[Path]:
         prefs, _ = self.rt.preferences()
         out = [Path(self.rt.config.workspace or ".").resolve()]
-        for raw in prefs.knowledge_folders:
+        for raw in [*prefs.knowledge_folders, *prefs.vaults]:  # Obsidian vaults too.
             path = Path(raw).expanduser().resolve()
             if path not in out:
                 out.append(path)
@@ -384,6 +384,9 @@ class KnowledgeBase:
                 for r in self._db.execute("SELECT folder, count(*) AS n FROM files GROUP BY folder")
             }
         workspace = Path(self.rt.config.workspace or ".").resolve()
+        prefs, _ = self.rt.preferences()
+        added = {Path(p).expanduser().resolve() for p in prefs.knowledge_folders}
+        vaults = {Path(p).expanduser().resolve() for p in prefs.vaults} - added
         return {
             "state": self.state,
             "progress": self.progress,
@@ -399,7 +402,9 @@ class KnowledgeBase:
                     "label": self.label(f),
                     "files": per_folder.get(str(f), 0),
                     "exists": f.is_dir(),
-                    "removable": f != workspace,
+                    # Vaults are listed under "Your life" and removed there.
+                    "removable": f != workspace and f not in vaults,
+                    "vault": f in vaults,
                 }
                 for f in self.folders()
             ],

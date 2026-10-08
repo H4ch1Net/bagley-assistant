@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="ctos">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ctOS Notification</title><link rel="stylesheet" href="../tokens.css"></head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;300;400;500;600;700&display=swap">
+<style>*{box-sizing:border-box}html,body{margin:0;background:var(--background);color:var(--textPrimary);font-family:var(--font-mono)}body{padding:16px}.cap{font-size:12px;color:var(--textSecondary)}
+
+.stack{display:flex;flex-direction:column;gap:12px;width:360px;max-width:100%;font-family:"JetBrains Mono",monospace;font-size:14.67px;color:var(--textPrimaryDim)}
+.n{background:var(--panel-translucent);border:1px solid var(--ctosGray);padding:12px}
+.n.low{border-color:var(--backgroundBright)}.n.crit{border-color:var(--error)}
+b{display:block;font-weight:700}
+.osd{background:linear-gradient(90deg,#5588aa 62%,transparent 62%),var(--panel-translucent)}
+</style>
+<div class="stack">
+<div class="n"><b>Screenshot saved</b>~/Pictures/Screenshots/2026-10-07_16-43.png</div>
+<div class="n osd"><b>Volume</b>62%</div>
+<div class="n low"><b>Clipboard</b>Copied 3 lines</div>
+<div class="n crit"><b>Battery critical</b>5% left. Plug in the charger.</div>
+</div>
+<p class="cap">The volume and brightness OSD fill uses mako's default progress-color (over #5588AA), the one blue in the system, because b1t's mako config does not set it.</p>
+
+</body>
+</html>

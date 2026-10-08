@@ -103,8 +103,10 @@ export function timeOfDay(date = new Date()) {
   return "Good evening";
 }
 
+/** ctOS clock: 24-hour hhmm, e.g. 1643 (rendered as -1643-). */
 export function clockTime(seconds) {
-  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const d = new Date(seconds * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 export function dateBucket(seconds) {

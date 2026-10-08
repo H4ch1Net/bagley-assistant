@@ -19,6 +19,7 @@ import hashlib
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -28,8 +29,33 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("bagley.automations")
 
-KINDS = ("task", "reminder", "watch")
+KINDS = ["task", "reminder", "watch"]
 MIN_INTERVAL = {"task": 60, "reminder": 60, "watch": 300}
+
+# Runs one automation and returns (status, result text, new state).
+KindRunner = Callable[["Scheduler", dict[str, Any]], Awaitable[tuple[str, str, dict[str, Any]]]]
+
+
+@dataclass
+class Kind:
+    name: str
+    run: KindRunner
+    min_interval: int = 60
+    needs_prompt: bool = False
+    validate: Callable[[dict[str, Any]], None] | None = None  # Raise ScheduleError if invalid.
+
+
+EXTRA_KINDS: dict[str, Kind] = {}
+
+
+def register_kind(kind: Kind) -> None:
+    """Add an automation kind from a feature module (a briefing, a routine...)."""
+    EXTRA_KINDS[kind.name] = kind
+    if kind.name not in KINDS:
+        KINDS.append(kind.name)
+    MIN_INTERVAL[kind.name] = kind.min_interval
+
+
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 UNITS = {"m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60, "h": 3600, "hr": 3600, "hrs": 3600,
@@ -245,8 +271,12 @@ class Scheduler:
             raise ScheduleError(f"Unknown kind '{kind}'.")
         if kind == "watch" and not (target or "").startswith(("http://", "https://")):
             raise ScheduleError("A watcher needs an http(s) URL.")
-        if kind in ("task", "reminder") and not (prompt or name).strip():
+        extra = EXTRA_KINDS.get(kind)
+        needs_prompt = kind in ("task", "reminder") or (extra is not None and extra.needs_prompt)
+        if needs_prompt and not (prompt or name).strip():
             raise ScheduleError("Say what the automation should do.")
+        if extra and extra.validate:
+            extra.validate({"name": name, "prompt": prompt, "target": target})
         info = preview(schedule, kind)
         return self.rt.store.create_automation(
             kind=kind,
@@ -301,6 +331,8 @@ class Scheduler:
                 result = await self._remind(item)
             elif item["kind"] == "watch":
                 status, result, state = await self._watch(item)
+            elif item["kind"] in EXTRA_KINDS:
+                status, result, state = await EXTRA_KINDS[item["kind"]].run(self, item)
             else:
                 status, result = await self._task_run(item)
         except Exception as exc:
@@ -337,6 +369,18 @@ class Scheduler:
         )
         await self.rt.broadcast({"type": "automations.changed"})
         await self.rt.broadcast({"type": "conversations.changed"})
+
+    # Helpers for automation kinds defined elsewhere.
+
+    def conversation(self, item: dict[str, Any]) -> str:
+        """The automation's chat, created on first use."""
+        return self._conversation(item)
+
+    async def run_agent(
+        self, item: dict[str, Any], prompt: str, *, tools: bool = True
+    ) -> tuple[str, str]:
+        """Run the agent unattended in the automation's chat. Returns (status, final text)."""
+        return await self._agent(item, prompt, tools=tools)
 
     def _conversation(self, item: dict[str, Any]) -> str:
         store = self.rt.store

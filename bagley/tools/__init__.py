@@ -153,16 +153,20 @@ _JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean", 
 def _schema_for(annotation: Any) -> tuple[dict[str, Any], bool]:
     """Return a JSON schema for ``annotation`` and whether ``None`` is allowed."""
     description = ""
-    if get_origin(annotation) is Annotated:
-        annotation, *extras = get_args(annotation)
-        description = next((e for e in extras if isinstance(e, str)), "")
     optional = False
-    origin = get_origin(annotation)
-    if origin in (Union, types.UnionType):
-        members = [a for a in get_args(annotation) if a is not type(None)]
-        optional = len(members) < len(get_args(annotation))
-        annotation = members[0] if len(members) == 1 else str
+    # Python 3.10 wraps ``Annotated[int | None, ...] = None`` in one more Optional, so peel
+    # Annotated and Optional layers in any order.
+    while True:
         origin = get_origin(annotation)
+        if origin is Annotated:
+            annotation, *extras = get_args(annotation)
+            description = description or next((e for e in extras if isinstance(e, str)), "")
+        elif origin in (Union, types.UnionType):
+            members = [a for a in get_args(annotation) if a is not type(None)]
+            optional = optional or len(members) < len(get_args(annotation))
+            annotation = members[0] if len(members) == 1 else str
+        else:
+            break
     if origin is Literal:
         values = list(get_args(annotation))
         schema: dict[str, Any] = {
@@ -296,14 +300,33 @@ class Registry:
                 self.errors.append({"source": f"plugin:{path.name}", "error": str(exc)})
 
 
-def build_registry(config: ServerConfig) -> Registry:
-    from bagley.tools import automation, core, files, knowledge, memory, shell, system, web
+CORE_MODULES = ("core", "web", "files", "knowledge", "memory", "system", "automation")
 
+
+def builtin_modules(config: ServerConfig) -> list[types.ModuleType]:
+    """The core tool modules in a fixed order, then every other module in this package.
+
+    A module can define ``available(config) -> bool`` to register its tools only when the
+    feature is switched on (the shell tools need ``BAGLEY_ENABLE_SHELL``, for example).
+    """
+    import importlib
+    import pkgutil
+
+    names = list(CORE_MODULES)
+    names += sorted(m.name for m in pkgutil.iter_modules(__path__) if m.name not in CORE_MODULES)
+    modules = []
+    for name in names:
+        module = importlib.import_module(f"{__name__}.{name}")
+        check = getattr(module, "available", None)
+        if check is None or check(config):
+            modules.append(module)
+    return modules
+
+
+def build_registry(config: ServerConfig) -> Registry:
     registry = Registry()
-    for module in (core, web, files, knowledge, memory, system, automation):
+    for module in builtin_modules(config):
         registry.add_module(module, "builtin")
-    if config.enable_shell:
-        registry.add_module(shell, "builtin")
     assert config.plugins_dir is not None
     registry.load_plugins(config.plugins_dir)
     return registry

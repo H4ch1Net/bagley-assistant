@@ -312,3 +312,151 @@ def test_automation_form_keeps_draft_labels_and_toasts(page, stack):
     expect(toast).to_be_visible()
     page.click("#tab-automations")
     expect(page.get_by_label("Name")).to_have_value("")
+
+
+REPORT = {
+    "title": "MORNING BRIEFING",
+    "title_line": "MORNING BRIEFING // H4CH1",
+    "host": "h4ch1",
+    "created_at": 1791446400,
+    "status": "crit",
+    "level": "critical",
+    "headline": "1 CRITICAL // 1 WARNING",
+    "counts": {"ok": 1, "info": 0, "warn": 1, "crit": 1, "unavailable": 0},
+    "sections": [
+        {"id": "services", "title": "Services", "status": "crit", "summary": "1 FAILED",
+         "findings": [{"severity": "crit", "text": "sshd.service FAILED", "detail": "OpenSSH Daemon"}], "data": {}},
+        {"id": "disks", "title": "Disks", "status": "ok", "summary": "3 FILESYSTEMS OK", "findings": [], "data": {}},
+        {"id": "ports", "title": "Ports", "status": "warn", "summary": "1 NEW",
+         "findings": [{"severity": "warn", "text": "NEW TCP 0.0.0.0:8080", "detail": "python3"}], "data": {}},
+    ],
+}  # fmt: skip
+
+
+def test_watchdog_panel_and_briefing_card(page, stack):
+    from bagley.watchdog.baseline import Baseline
+    from bagley.watchdog.report import LAST_REPORT
+
+    store = stack.runtime.store
+    Baseline(store).set(LAST_REPORT, REPORT, REPORT["created_at"])
+    chat = store.create_conversation("Morning briefing")
+    store.add_message(chat["id"], "user", "what's this error?",
+                      meta={"source": "overlay", "context": {"app": "kitty", "window_title": "~/code - nvim", "selection": "E501"}})  # fmt: skip
+    store.add_message(chat["id"], "assistant", "# MORNING BRIEFING", meta={"watchdog": REPORT})
+
+    page.keyboard.press("Control+,")
+    page.click("#tab-watchdog")
+    report = page.locator("#settings-panel .wd")
+    expect(report).to_contain_text("1 CRITICAL // 1 WARNING")
+    expect(report).to_contain_text("OK 01 // WARN 01 // CRIT 01 // N/A 00")
+    expect(report.locator("details[data-section='services']")).to_have_attribute("open", "")
+    expect(report.locator(".wd-finding.crit")).to_contain_text("sshd.service FAILED")
+    page.click("#settings-panel button:has-text('Enable morning briefing')")
+    expect(page.locator(".toast >> text=Morning briefing")).to_be_visible()
+    expect(page.locator("#settings-panel button:has-text('Briefing scheduled')")).to_be_disabled()
+    page.click("#tab-automations")
+    expect(
+        page.locator(".list-item.automation").filter(has_text="Morning briefing")
+    ).to_be_visible()
+    page.keyboard.press("Escape")
+
+    page.reload()
+    page.wait_for_selector(".conn .dot.ok")
+    page.locator(".conv-link").filter(has_text="Morning briefing").click()
+    expect(page.locator(".turn-user .bubble-origin")).to_have_text(
+        "OVERLAY // KITTY // ~/code - nvim // SELECTION"
+    )
+    expect(page.locator(".turn-assistant .wd")).to_contain_text("MORNING BRIEFING // H4CH1")
+    expect(page.locator(".turn-assistant .wd .wd-run")).to_be_hidden()
+
+
+def test_add_claude_from_the_hosted_api_presets(page, stack, monkeypatch):
+    from tests.test_claude import FakeClaude, _patched, anthropic
+
+    api = FakeClaude()
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _patched(api, anthropic.AsyncAnthropic))
+    page.keyboard.press("Control+,")
+    page.click("#tab-model")
+    page.click(".hosted-api[data-preset='claude']")
+    form = page.locator("#settings-panel .section").filter(has_text="Add Claude (Anthropic)")
+    expect(form.get_by_label("URL")).to_have_value("https://api.anthropic.com")
+    expect(form.get_by_label("Model", exact=True)).to_have_value("claude-opus-5-5")
+    expect(form.get_by_label("Server type")).to_have_value("anthropic")
+    expect(form.locator("a:has-text('Get a key')")).to_have_attribute(
+        "href", re.compile("console.anthropic.com")
+    )
+    form.get_by_label("API key").fill("sk-ant-ui")
+    form.locator("button:has-text('Test key')").click()
+    expect(form.locator(".status-line")).to_contain_text("Connected · 2 models")
+    assert api.model_headers[-1]["x-api-key"] == "sk-ant-ui"
+    form.locator("button:has-text('Add machine')").click()
+    row = page.locator(".machine-row[data-machine='claude']")
+    expect(row).to_contain_text("cloud")
+    expect(row).to_contain_text("key saved")
+    expect(page.locator(".hosted-api[data-preset='claude'] .state")).to_have_text("ADDED")
+    saved = stack.runtime.preferences()[0].machines[0]
+    assert (saved.provider, saved.api_key, saved.model) == (
+        "anthropic",
+        "sk-ant-ui",
+        "claude-opus-5-5",
+    )
+
+
+def test_work_assets_and_health_checks(page, stack):
+    page.keyboard.press("Control+,")
+    page.click("#tab-work")
+    page.click("#settings-panel button:has-text('Add asset')")
+    form = page.locator(".asset-form")
+    form.get_by_label("Client", exact=True).fill("ACME")
+    form.get_by_label("Name", exact=True).fill("web01")
+    form.get_by_label("IP address").fill("127.0.0.1")
+    form.get_by_label("Checks").fill(f'[{{"type": "tcp", "port": {stack.app_port}}}]')
+    form.locator("button:has-text('Add asset')").click()
+    expect(page.locator(".toast >> text=web01 added")).to_be_visible()
+    row = page.locator(".asset-row").filter(has_text="web01")
+    expect(row).to_contain_text("127.0.0.1")
+    expect(page.locator(".client-card").filter(has_text="ACME")).to_contain_text("NOT CHECKED")
+    page.click("#settings-panel button:has-text('Run checks')")
+    expect(page.locator("#settings-panel .term")).to_contain_text("[OK  ] ACME/web01")
+    expect(row.locator(".wd-status")).to_have_text("[OK]")
+    page.locator(".client-card").filter(has_text="ACME").click()
+    expect(page.locator(".client-card[aria-pressed='true']")).to_contain_text("ACME")
+
+
+def test_shell_tab_suggests_without_running(page, stack):
+    stack.mock.script = [Reply(text="```bash\nfind ~ -size +1G\n```\n# files over 1 GB")]
+    page.keyboard.press("Control+,")
+    page.click("#tab-shell")
+    expect(page.locator("#settings-panel")).to_contain_text(
+        "source ~/.local/share/bagley/zsh/bagley.zsh"
+    )
+    page.get_by_label("What you want to do").fill("find files over 1GB")
+    page.keyboard.press("Enter")
+    expect(page.locator(".shell-out .term")).to_have_text("find ~ -size +1G")
+    expect(page.locator(".shell-out")).to_contain_text("not run")
+
+
+def test_claude_answers_when_this_machine_has_no_model_server(page, stack, monkeypatch):
+    from tests.test_claude import FakeClaude, _patched, anthropic, reply
+
+    api = FakeClaude()
+    api.script = [reply(text="Hello from Claude.")]
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _patched(api, anthropic.AsyncAnthropic))
+    stack.runtime.update_preferences({"base_url": "http://127.0.0.1:9"})
+    page.reload()
+    expect(page.locator("#setup")).to_contain_text("Use Claude or another hosted API")
+    page.click("#setup button:has-text('Use an API key')")
+    expect(page.locator(".hosted-api[data-preset='claude']")).to_be_in_viewport()
+    page.keyboard.press("Escape")
+
+    stack.runtime.update_preferences(
+        {"machines": [{"id": "claude", "name": "Claude", "role": "cloud", "provider": "anthropic",
+                       "base_url": "https://api.anthropic.com", "api_key": "sk-ant-ui"}]}
+    )  # fmt: skip
+    page.reload()
+    expect(page.locator("#conn-label")).to_have_text("Online // CLAUDE", timeout=15000)
+    expect(page.locator("#setup")).to_be_hidden()
+    send(page, "hi")
+    wait_idle(page)
+    expect(page.locator(".turn-assistant .prose")).to_contain_text("Hello from Claude.")
+    expect(page.locator(".turn-assistant .node")).to_contain_text("CLAUDE // claude-opus-5-5")

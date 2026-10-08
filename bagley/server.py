@@ -31,7 +31,9 @@ from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from bagley import __version__, automations, journal
-from bagley.agent import Agent, RunRequest
+from bagley.agent import Agent, RunRequest, public_message
+from bagley.api import routers
+from bagley.approvals import Pending, summarize
 from bagley.config import (
     LOOPBACK_HOSTS,
     PREFERENCE_ENV,
@@ -40,6 +42,8 @@ from bagley.config import (
     env_preferences,
 )
 from bagley.llm import LLMError, ToolCall
+from bagley.modes import MODES, public_modes
+from bagley.permissions import default_permission, permission_for
 from bagley.prompts import PERSONAS
 from bagley.runtime import Runtime
 from bagley.tools import Tool
@@ -57,7 +61,13 @@ MAX_UPLOAD_BYTES = 5_000_000
 
 class GuardMiddleware:
     """Blocks DNS rebinding (Host check), cross-site requests (Origin check) and, when a token is
-    configured, unauthenticated access."""
+    configured, unauthenticated access.
+
+    With ``BAGLEY_TAILSCALE_USERS`` set, requests for a non-loopback host name (the tailnet name
+    ``tailscale serve`` proxies) must also come from one of those tailnet logins, or carry the
+    token. ``tailscale serve`` connects from this machine and sets ``Tailscale-User-Login`` from
+    the caller's tailnet identity, replacing any value the caller sent. Nobody else can reach a
+    loopback-only port to forge it, and beyond loopback the token is required anyway."""
 
     def __init__(self, app: ASGIApp, config: ServerConfig) -> None:
         self.app = app
@@ -83,14 +93,14 @@ class GuardMiddleware:
         if origin and unsafe and urlsplit(origin).netloc.lower() != host.lower():
             await self._deny(scope, receive, send, 403, "Cross-origin request blocked.")
             return
-        if self.config.token and not self._authorized(scope, headers):
-            query = parse_qs(scope.get("query_string", b"").decode())
-            supplied = (query.get("token") or [""])[0]
-            if (
-                scope["type"] == "http"
-                and supplied
-                and hmac.compare_digest(supplied, self.config.token)
-            ):
+        token_ok = bool(self.config.token) and self._authorized(scope, headers)
+        if self.config.tailscale_users and hostname.lower() not in LOOPBACK_HOSTS and not token_ok:
+            login = headers.get("tailscale-user-login", "").strip().lower()
+            if login not in self.config.tailscale_users and not self._query_token(scope):
+                await self._deny(scope, receive, send, 403, "This tailnet user is not allowed.")
+                return
+        if self.config.token and not token_ok:
+            if scope["type"] == "http" and self._query_token(scope):
                 await self._set_cookie_redirect(send, scope.get("path", "/"))
                 return
             await self._deny(
@@ -117,6 +127,12 @@ class GuardMiddleware:
     def _matches(self, supplied: str) -> bool:
         return hmac.compare_digest(supplied.encode(), self.config.token.encode())
 
+    def _query_token(self, scope: Scope) -> bool:
+        """A valid ``?token=`` (the link ``bagley`` prints), swapped for a cookie."""
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        supplied = (query.get("token") or [""])[0]
+        return bool(self.config.token and supplied) and self._matches(supplied)
+
     async def _set_cookie_redirect(self, send: Send, path: str) -> None:
         cookie = f"{TOKEN_COOKIE}={self.config.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
         await send(
@@ -141,15 +157,17 @@ class GuardMiddleware:
 
 
 class ChatSession:
-    """One WebSocket connection. Runs one agent turn at a time and brokers approvals."""
+    """One WebSocket connection. Runs one agent turn at a time; its approvals go through the
+    shared broker, so another window, the desktop or the phone can answer them too."""
 
     def __init__(self, ws: WebSocket, runtime: Runtime) -> None:
         self.ws = ws
         self.agent = Agent(runtime)
         self.task: asyncio.Task[None] | None = None
-        self.approvals: dict[str, asyncio.Future[str]] = {}
+        self.asked: set[str] = set()  # Approval ids this window's runs are waiting on.
         self.always_allow: set[str] = set()
         self._send_lock = asyncio.Lock()
+        self._conversation: str | None = None
 
     async def emit(self, event: dict[str, Any]) -> None:
         async with self._send_lock:
@@ -159,17 +177,32 @@ class ChatSession:
     async def approve(self, call: ToolCall, tool: Tool) -> bool:
         if tool.name in self.always_allow:
             return True
-        fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        self.approvals[call.id] = fut
+        broker = self.agent.rt.approvals
+        self.asked.add(call.id)
         try:
-            decision = await asyncio.wait_for(fut, timeout=APPROVAL_TIMEOUT)
-        except asyncio.TimeoutError:
-            decision = "deny"
+            decision = await broker.request(
+                Pending(
+                    id=call.id,
+                    tool=tool.name,
+                    arguments=call.arguments,
+                    summary=summarize(tool.summary, tool.name, call.arguments),
+                    conversation_id=self._conversation,
+                    source="web",
+                ),
+                timeout=APPROVAL_TIMEOUT,
+            )
         finally:
-            self.approvals.pop(call.id, None)
+            self.asked.discard(call.id)
         if decision == "always":
             self.always_allow.add(tool.name)
         return decision in ("allow", "always")
+
+    async def emit_run(self, event: dict[str, Any]) -> None:
+        if event["type"] in ("run.start", "conversation"):
+            self._conversation = event.get("conversation_id") or (
+                event.get("conversation") or {}
+            ).get("id")
+        await self.emit(event)
 
     async def serve(self) -> None:
         runtime = self.agent.rt
@@ -186,6 +219,7 @@ class ChatSession:
             pass
         finally:
             runtime.listeners.discard(self.emit)
+            runtime.approvals.deny_all(set(self.asked))
             if self.task and not self.task.done():
                 self.task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -200,22 +234,23 @@ class ChatSession:
             mode = data.get("mode", "send")
             if mode not in ("send", "regenerate", "edit"):
                 mode = "send"
+            images = data.get("images") if isinstance(data.get("images"), list) else []
             req = RunRequest(
                 text=str(data.get("text", ""))[:100_000],
                 conversation_id=data.get("conversation_id") or None,
                 mode=mode,
+                source="web",
+                images=[str(i) for i in images[:4]],
+                conversation_mode=str(data.get("conversation_mode") or "") or None,
             )
-            self.task = asyncio.create_task(self.agent.run(req, self.emit, self.approve))
+            self._conversation = req.conversation_id
+            self.task = asyncio.create_task(self.agent.run(req, self.emit_run, self.approve))
         elif kind == "cancel":
-            for fut in self.approvals.values():
-                if not fut.done():
-                    fut.set_result("deny")
+            self.agent.rt.approvals.deny_all(set(self.asked))
             if self.task and not self.task.done():
                 self.task.cancel()
         elif kind == "approval":
-            fut = self.approvals.get(str(data.get("id")))
-            if fut and not fut.done():
-                fut.set_result(str(data.get("decision", "deny")))
+            self.agent.rt.approvals.resolve(str(data.get("id")), str(data.get("decision", "deny")))
         elif kind == "ping":
             await self.emit({"type": "pong"})
 
@@ -234,11 +269,12 @@ class AppStatic(StaticFiles):
 
 
 class RenameBody(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    mode: str | None = Field(default=None, max_length=32)
 
 
 class AutomationBody(BaseModel):
-    kind: str = Field(pattern="^(task|reminder|watch)$")
+    kind: str = Field(pattern="^[a-z_]{1,24}$")  # Checked against the registered kinds.
     name: str = Field(default="", max_length=120)
     prompt: str = Field(default="", max_length=4000)
     schedule: str = Field(min_length=1, max_length=120)
@@ -269,8 +305,12 @@ def _public_preferences(runtime: Runtime) -> dict[str, Any]:
     values = prefs.model_dump()
     for key in SECRET_PREFERENCES:
         values[f"has_{key}"] = bool(values.pop(key))
+    for machine in values["machines"]:
+        machine["has_api_key"] = bool(machine.pop("api_key"))
     from_env = env_preferences(runtime.env)
     return {
+        "modes": public_modes(prefs),
+        "machine": runtime.router.machines(prefs)[0].name,
         "values": values,
         "locked": sorted(locked),
         # Which variable locks each field (an env API key also pins the server it is sent to).
@@ -312,7 +352,8 @@ def content_security_policy(html: str) -> str:
         "default-src 'self'; "
         f"script-src 'self' {hashes}; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
         "connect-src 'self' ws: wss:; "
         "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     )
@@ -367,8 +408,17 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     @app.get("/api/info")
     async def info() -> dict[str, Any]:
         r = rt()
+        prefs, _ = r.preferences()
+        import getpass
+
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = ""
         return {
             "version": __version__,
+            "user": user,
+            "machine": r.router.machines(prefs)[0].name,
             "workspace": str(r.config.workspace),
             "data_dir": str(r.config.data_dir),
             "shell_enabled": r.config.enable_shell,
@@ -463,7 +513,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         if conv.get("unread"):
             store.set_unread(cid, False)
             conv["unread"] = 0
-        messages = store.list_messages(cid)
+        messages = [public_message(m) for m in store.list_messages(cid)]
         uis = [m["meta"]["ui"] for m in messages if m["meta"].get("ui", {}).get("journal_id")]
         reverted = store.reverted_ids([ui["journal_id"] for ui in uis])
         for ui in uis:
@@ -480,9 +530,16 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
 
     @app.patch("/api/conversations/{cid}")
     async def rename_conversation(cid: str, body: RenameBody) -> dict[str, Any]:
-        if not rt().store.rename_conversation(cid, body.title):
+        store = rt().store
+        if not store.get_conversation(cid):
             raise HTTPException(404, "Conversation not found.")
-        return rt().store.get_conversation(cid) or {}
+        if body.mode is not None:
+            if body.mode not in MODES:
+                raise HTTPException(422, f"Unknown mode '{body.mode}'.")
+            store.set_mode(cid, body.mode)
+        if body.title is not None:
+            store.rename_conversation(cid, body.title)
+        return store.get_conversation(cid) or {}
 
     @app.delete("/api/conversations/{cid}", status_code=204)
     async def delete_conversation(cid: str) -> Response:
@@ -681,10 +738,14 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     async def list_tools() -> dict[str, Any]:
         r = rt()
         prefs, _ = r.preferences()
-        disabled = set(prefs.disabled_tools)
         return {
             "tools": [
-                {**t.describe(), "enabled": t.name not in disabled}
+                {
+                    **t.describe(),
+                    "enabled": permission_for(t, prefs) != "deny",
+                    "permission": permission_for(t, prefs),
+                    "default_permission": default_permission(t),
+                }
                 for t in r.registry.tools.values()
             ],
             "errors": r.registry.errors,
@@ -696,6 +757,9 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     async def chat_socket(ws: WebSocket) -> None:
         await ws.accept()
         await ChatSession(ws, rt()).serve()
+
+    for router in routers():
+        app.include_router(router)
 
     app.mount("/static", AppStatic(directory=STATIC_DIR), name="static")
     return app

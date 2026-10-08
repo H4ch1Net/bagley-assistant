@@ -1,0 +1,7 @@
+kitty with the Mono Glow theme on b1t: `term-bg` at 0.85 opacity with blur 32 over the wallpaper, `term-fg` text, 14px padding, JetBrainsMono Nerd Font Mono at 12pt, a beam cursor with a trail, and inactive panes at 0.6 text opacity.
+
+- Tabs sit on top in slanted powerline style, shown from 2 tabs: active `term-tab-active` with `background` text in bold, inactive `term-selection` with `textSecondary` text, titled ` {index}:{title} `.
+- New shells print the ctOS banner: a `textSecondary` box drawn with `┌─[ ctOS ]` and 40 `─`, the line `▨ user@host` in `textPrimaryDim` with `● ONLINE` in `success`, `UPTIME` and `TIP` labels in `textSecondary` with values in `textPrimaryDim`, closed with `└` and 50 `─`.
+- Powerlevel10k lean, two lines, transparent: distro icon `ctosGray`, directory `textPrimaryDim` with the last segment `textPrimary` and shortened parts `textSecondary`, git branch `success` when clean, `textPrimaryDim` when modified, `error` on conflict. The right side shows status (`✘ n` in `error`), duration, jobs, context and the time `HH:MM:SS`, all `textSecondary`. The prompt character `❯` is `success` after exit 0 and `error` after a failure. Transient prompt is on.
+- Marks (Ctrl+Alt+M): mark1 on `success`, mark2 on `term-tab-active`, mark3 on `error`, all with `term-bg` text.
+- Zed uses the same palette: keywords and functions white, strings `ansi10`, numbers `ansi11`, comments `textSecondary` italic.

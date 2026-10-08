@@ -86,7 +86,7 @@ async def test_move_delete_and_mkdir_revert(ctx):
         await call(ctx, "delete_file", path=".")
 
 
-def test_schema_migration_adds_unread(tmp_path):
+def test_schema_migration_adds_unread_and_mode(tmp_path):
     path = tmp_path / "old.db"
     db = sqlite3.connect(path)
     db.execute(
@@ -103,6 +103,7 @@ def test_schema_migration_adds_unread(tmp_path):
         "created_at": 1,
         "updated_at": 1,
         "unread": 0,
+        "mode": "default",
     }
     store.close()
 

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="ctos">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ctOS Greeter</title><link rel="stylesheet" href="../tokens.css"></head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;300;400;500;600;700&display=swap">
+<style>*{box-sizing:border-box}html,body{margin:0;background:var(--background);color:var(--textPrimary);font-family:var(--font-mono)}
+body{padding:16px}
+.cf{position:relative}.cf>i{position:absolute;width:7px;height:7px;border:0 solid var(--textPrimary)}
+.cf>i:nth-child(1){left:0;top:0;border-top-width:1px;border-left-width:1px}.cf>i:nth-child(2){right:0;top:0;border-top-width:1px;border-right-width:1px}
+.cf>i:nth-child(3){right:0;bottom:0;border-bottom-width:1px;border-right-width:1px}.cf>i:nth-child(4){left:0;bottom:0;border-bottom-width:1px;border-left-width:1px}
+.acc{position:absolute;width:4px;height:4px}
+.cap{font-size:12px;color:var(--textSecondary);letter-spacing:.04em}
+
+body{padding:0}.scr{position:relative;width:1280px;height:720px;overflow:hidden;background:var(--background) url(https://raw.githubusercontent.com/TSM-061/ctOS/main/greeter/resources/lock.png) center/cover}
+.abs{position:absolute}
+.lk .bar{position:absolute;left:0;top:0;bottom:0;background:var(--ctosGray)}.lk .ct{position:absolute;color:var(--background);font-weight:500;line-height:1}.lk .os{position:absolute;right:0;font-weight:300;line-height:1;text-align:right}
+.time{left:36px;top:36px;display:flex;gap:20px}.tbox{position:relative;width:110px;height:110px;display:grid;place-items:center}.tbox img.ic{width:110px}
+.clock{font-size:48px;font-weight:100;color:var(--textPrimaryDimmer);line-height:1}.pill{display:inline-block;margin-top:12px;border:1px solid var(--date-border);color:var(--date-text);font-size:14px;font-weight:300;padding:3px 12px 3px 8px}
+.lbl{display:flex;gap:5px;align-items:center;font-size:9.33px}.lbl img{height:6.67px}
+.field{height:26.67px;border:2px solid var(--ctosGray);background:var(--background);padding-left:8px;display:flex;align-items:center;font-size:10.67px;letter-spacing:5px}
+.login{margin-left:auto;width:38%;height:17.33px;background:var(--ctosGray);color:var(--background);display:grid;place-items:center;font-size:10.67px}
+.disc{display:flex;gap:8px;font-size:11px;color:var(--ctosGray);line-height:1.25}.disc img{width:32px;height:32px}
+.term{left:47px;bottom:33px;font-size:9.33px;color:var(--textPrimaryDimmer);display:flex;flex-direction:column;gap:3.33px;width:560px}
+.ver{position:relative;margin-top:10.00px;border:1px solid #9f9f9f;color:#d4d4d4;font-size:8.67px;padding:3px 10px;align-self:flex-start}
+.ses{right:27px;top:33px;display:flex}.ses .lg{width:37px;height:37px;background:var(--ctosGray);display:grid;place-items:center}.ses .lg img{width:33px}
+.ses .mid{width:100px;display:flex;flex-direction:column}.ses .t1{height:18.5px;background:var(--backgroundBright);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-size:9.33px}
+.ses .t1 img{height:10px}.ses .t2{height:18.5px;background:var(--ctosGray);padding:3px}.ses .t2 img{width:100%;height:100%;display:block}
+.ses .pic{width:50px;height:50px;background:var(--textSecondary)}
+.dev{right:27px;bottom:33px;height:324px;display:flex;gap:4px}.dev .as{width:23px;display:flex;flex-direction:column;align-items:center;padding-top:3px}
+.dev .as .tz{width:12px}.dev .as .tx{margin-top:auto;width:9px}.dev .as .rl{height:3px;width:100%;background:var(--textPrimaryDim);margin-top:4px}.dev .bc{height:324px}
+</style>
+<div class="scr">
+<div class="abs time"><div class="tbox"><img class="ic" src="../assets/os-icon.svg" alt=""><img class="acc" src="../assets/accent.svg" alt="" style="top:-24px;left:-24px;width:4px;height:4px;transform:rotate(0deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:-24px;left:130px;width:4px;height:4px;transform:rotate(90deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:130px;left:130px;width:4px;height:4px;transform:rotate(180deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:130px;left:-24px;width:4px;height:4px;transform:rotate(270deg)"></div>
+<div><div class="clock">16:43</div><span class="pill">Wednesday 07 October</span></div></div>
+<div class="abs lk" style="left:542.0px;top:276.3px;width:196.0px;height:32.0px">
+<div class="bar" style="width:143.1px"></div><span class="ct" style="left:113.7px;font-size:22.7px;bottom:3.3px">CT</span>
+<span class="os" style="width:51.0px;font-size:42.7px;bottom:-2.0px">OS</span><img class="acc" src="../assets/accent.svg" alt="" style="top:-14px;left:-22px;width:4px;height:4px;transform:rotate(0deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:-14px;left:214.0px;width:4px;height:4px;transform:rotate(90deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:42.0px;left:214.0px;width:4px;height:4px;transform:rotate(180deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:42.0px;left:-22px;width:4px;height:4px;transform:rotate(270deg)"></div>
+<div class="abs" style="left:542.0px;top:341.7px;width:196.0px"><div class="lbl"><img src="../assets/barcode.svg" alt=""><span>PASSPHRASE</span></div>
+<div class="field">██████<span style="margin-left:2px">▁</span></div><div class="login">LOGIN</div></div>
+<div class="abs disc" style="left:544.0px;top:425.0px"><img src="../assets/tesseract.svg" alt=""><div>Property of Blume Corp. All usage is<br>subject to Sentinel Active Monitoring.</div></div>
+<div class="abs term"><span>REGION_LINK_ESTABLISHED : B1T</span><span>LOG_STREAM_CONNECTED // 1B7C5296-469D-4595-AD5D-4E31349CF13F</span><span>WL_OUTPUT_FOUND: eDP-1 &lt;-&gt; ADDR_PTR: 0x7F3A91C2</span>
+<span>----  GREETER_UI_INITIALIZING  ----</span><span>◈ [BLUME_IDP] using Protocol::CTOS_LOCKD</span><span style="color:var(--textPrimaryDim)">» </span>
+<span class="ver">blume-krn-1.0.8 &lt;&gt; ctOS-1.0.0-a<img class="acc" src="../assets/accent.svg" alt="" style="top:-14px;left:-22px;width:4px;height:4px;transform:rotate(0deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:-14px;left:208px;width:4px;height:4px;transform:rotate(90deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:26px;left:208px;width:4px;height:4px;transform:rotate(180deg)"><img class="acc" src="../assets/accent.svg" alt="" style="top:26px;left:-22px;width:4px;height:4px;transform:rotate(270deg)"></span></div>
+<div class="abs ses"><div class="lg"><img src="../assets/blume-logo.svg" alt=""></div><div class="mid"><div class="t1"><span>H4CH1</span><img src="../assets/tesseract.svg" alt=""></div><div class="t2"><img src="../assets/user-barcode.svg" alt=""></div></div><div class="pic"></div></div>
+<div class="abs dev"><div class="as"><img class="tz" src="../assets/tesseract.svg" alt=""><img class="tx" src="../assets/device-text.svg" alt=""><div class="rl"></div></div><img class="bc" src="../assets/device-barcode.svg" alt=""></div>
+</div>
+</body>
+</html>

@@ -1,12 +1,16 @@
-// Entry point: wires state, socket, avatar, thread, sidebar, settings and shortcuts together.
+// Entry point: wires state, socket, bar, avatar, thread, sidebar, settings and shortcuts together.
 
 import { api, ChatSocket } from "./api.js";
+import { Approvals } from "./approvals.js";
 import { Attachments } from "./attachments.js";
 import { mountAvatars } from "./avatar.js";
+import { Bar, currentMode } from "./bar.js";
 import { Chat } from "./chat.js";
+import { loadRoutines, saveFromChat } from "./routines.js";
 import { pullModel, RECOMMENDED_MODELS, savePrefs, Settings } from "./settings.js";
 import { Sidebar } from "./sidebar.js";
 import { bus, setUi, state, STATUS_TEXT } from "./state.js";
+import { applyAppearance, syncFromServer } from "./theme.js";
 import { announce, closeMenus, openMenu, toast } from "./ui.js";
 import { $, copyText, el, formatBytes, formatTokens, icon, isMac, kbdLabel, relTime, timeOfDay } from "./util.js";
 import { voice } from "./voice.js";
@@ -17,27 +21,46 @@ const input = $("#composer-input");
 
 // Status -----------------------------------------------------------------------------------------
 
+const BUSY = ["thinking", "reasoning", "tool", "writing"];
 let settleTimer;
-function setStatus(name, label) {
+let currentStatus = "idle";
+
+/** Another machine answers (a GPU desktop, Claude) while this one's model server doesn't. */
+const routedElsewhere = () => !!state.route?.ok && state.route.machine_id !== "local";
+
+function setStatus(name, label, tool = "") {
   clearTimeout(settleTimer);
-  const offline = !state.connected || (state.health && !state.health.ok);
+  const offline = !state.connected || (state.health && !state.health.ok && !routedElsewhere());
   if (name === "idle" && offline) name = "offline";
+  if (name === "idle" && !state.run && state.activity && state.activity.state !== "idle") {
+    // Another client (the desktop overlay, the phone, an automation) has Bagley busy.
+    name = state.activity.state;
+    tool = state.activity.tool;
+  }
+  currentStatus = name;
   const text = label || (name === "offline" ? offlineText() : STATUS_TEXT[name] || name);
   avatars.setState(name);
+  if (tool) avatars.setTag(tool);
+  bar.setState(name, tool);
   const pill = $("#presence-state");
   pill.dataset.state = name;
-  pill.replaceChildren(...(["thinking", "reasoning", "tool", "writing"].includes(name) ? [el("span", { class: "spinner" })] : []), text);
+  pill.replaceChildren(...(BUSY.includes(name) ? [el("span", { class: "spinner" })] : []), el("span", { class: BUSY.includes(name) ? "dots" : "", text }));
   $("#tb-status").textContent = text;
   if (name === "happy") settleTimer = setTimeout(() => setStatus("idle"), 1600);
   if (name === "error") settleTimer = setTimeout(() => setStatus("idle"), 3200);
 }
 
 function offlineText() {
-  if (!state.connected) return "Reconnecting…";
-  return state.health?.error ? "Model server offline" : "Offline";
+  if (!state.connected) return "Reconnecting";
+  return state.health?.error ? "Model server offline" : "No signal";
 }
 
-// Chat, sidebar, settings ------------------------------------------------------------------------
+// Bar, chat, sidebar, settings -----------------------------------------------------------------
+
+const bar = new Bar({
+  onMode: (id) => setMode(id),
+  onNode: () => settings.open("model"),
+});
 
 const chat = new Chat({
   socket,
@@ -64,10 +87,15 @@ const sidebar = new Sidebar({
 
 const settings = new Settings({
   onModelsChanged: async () => {
-    await Promise.all([loadModels(), refreshHealth()]);
+    await Promise.all([loadModels(), refreshHealth(), loadMachines()]);
   },
   onMemoriesChanged: loadMemories,
   onAutomationsChanged: () => loadAutomations(),
+  openChat: (id) => navigate(id),
+});
+
+const approvals = new Approvals({
+  isShownInThread: (id) => chat.hasCard(id),
   openChat: (id) => navigate(id),
 });
 
@@ -76,6 +104,7 @@ const settings = new Settings({
 async function loadPrefs() {
   state.prefs = await api.get("/api/preferences");
   bus.emit("prefs");
+  syncFromServer(state.prefs.values.appearance);
 }
 
 async function loadTools() {
@@ -97,6 +126,7 @@ async function loadKnowledge() {
     return;
   }
   renderStats();
+  renderBootlog();
 }
 
 async function loadAutomations() {
@@ -106,6 +136,7 @@ async function loadAutomations() {
     return;
   }
   renderStats();
+  renderBootlog();
   if (settings.dialog.open && settings.tab === "automations") settings.renderAutomationList();
 }
 
@@ -118,6 +149,21 @@ async function loadModels() {
     state.models = [];
   }
   renderModelButton();
+}
+
+let machinesTimer;
+async function loadMachines() {
+  clearTimeout(machinesTimer);
+  try {
+    state.machines = await api.get("/api/machines");
+    state.route = await api.get("/api/machines/route");
+  } catch {
+    state.route = null;
+  }
+  renderNode();
+  renderStats();
+  if (state.health && !state.health.ok) bus.emit("health"); // The route may cover for it.
+  machinesTimer = setTimeout(loadMachines, 45000);
 }
 
 let healthTimer;
@@ -137,6 +183,7 @@ bus.on("health", () => {
   renderSetup();
   renderModelButton();
   renderStats();
+  renderBootlog();
   if (!state.run) setStatus("idle");
 });
 
@@ -144,6 +191,8 @@ bus.on("prefs", () => {
   renderModelButton();
   renderStats();
   renderPrivacy();
+  bar.renderModes();
+  renderSuggestions();
   loadTools().catch(() => {});
 });
 
@@ -159,31 +208,45 @@ async function route() {
   const match = location.hash.match(/^#\/c\/([\w-]+)/);
   const id = match ? match[1] : null;
   closeSidebar();
+  if (location.hash === "#/approvals") {
+    history.replaceState(null, "", "#/");
+    approvals.load();
+  }
   if (!id) {
     state.activeId = null;
+    state.activeMode = "default";
     chat.render([]);
     setTitle(null);
     sidebar.render();
-    renderStats();
+    afterRoute();
     return;
   }
   try {
     const data = await api.get(`/api/conversations/${id}`);
     state.activeId = id;
+    state.activeMode = data.conversation.mode || "default";
     sidebar.update({ id, unread: 0 });
     chat.render(data.messages);
     setTitle(data.conversation.title);
     const last = [...data.messages].reverse().find((m) => m.role === "assistant" && m.meta?.model);
-    state.lastStats = last ? { tokens_per_second: last.meta.tokens_per_second, prompt_tokens: last.meta.prompt_tokens } : null;
+    state.lastStats = last ? { tokens_per_second: last.meta.tokens_per_second, prompt_tokens: last.meta.prompt_tokens, machine: last.meta.machine, model: last.meta.model } : null;
   } catch (err) {
     toast(err.status === 404 ? "That chat no longer exists." : err.message, { type: "error" });
     history.replaceState(null, "", "#/");
     state.activeId = null;
+    state.activeMode = "default";
     chat.render([]);
     setTitle(null);
   }
   sidebar.render();
+  afterRoute();
+}
+
+function afterRoute() {
   renderStats();
+  bar.renderModes();
+  renderSuggestions();
+  approvals.render();
 }
 
 addEventListener("popstate", route);
@@ -198,12 +261,37 @@ function setTitle(title) {
   btn.textContent = title || "New chat";
   btn.disabled = !state.activeId;
   $("#export-btn").disabled = !state.activeId;
+  $("#routine-btn").hidden = !state.activeId;
   document.title = title ? `${title} · Bagley` : "Bagley";
+  document.dispatchEvent(new CustomEvent("bagley:chat", { detail: { id: state.activeId } }));
 }
 
 function newChat() {
   navigate(null);
   input.focus();
+}
+
+// Modes ------------------------------------------------------------------------------------------
+
+async function setMode(id) {
+  const mode = state.prefs?.modes.find((m) => m.id === id);
+  if (!mode) return;
+  if (state.activeId) {
+    try {
+      const conv = await api.patch(`/api/conversations/${state.activeId}`, { mode: id });
+      state.activeMode = conv.mode;
+      sidebar.upsert(conv);
+    } catch (err) {
+      toast(err.message, { type: "error" });
+      return;
+    }
+  } else {
+    state.nextMode = id;
+  }
+  bar.renderModes();
+  renderSuggestions();
+  announce(`${mode.label} mode`);
+  toast(`${mode.label} mode${state.activeId ? " for this chat" : " for the next chat"}`, { duration: 1800 });
 }
 
 // Socket events ----------------------------------------------------------------------------------
@@ -212,6 +300,7 @@ socket.on("open", () => {
   state.connected = true;
   refreshHealth();
   updateComposer();
+  approvals.load();
 });
 
 socket.on("close", () => {
@@ -232,26 +321,46 @@ socket.on("conversation", (ev) => {
   sidebar.upsert(ev.conversation);
   if (wasNew && ours) {
     state.activeId = ev.conversation.id;
+    state.activeMode = ev.conversation.mode || "default";
+    state.nextMode = null;
     history.replaceState(null, "", `#/c/${ev.conversation.id}`);
     setTitle(ev.conversation.title);
     sidebar.render();
+    bar.renderModes();
   }
 });
 
 socket.on("notification", (ev) => {
   const open = ev.conversation_id ? { label: "Open", run: () => navigate(ev.conversation_id) } : undefined;
-  toast(ev.body ? `${ev.title}: ${ev.body}` : ev.title, { action: open, type: ev.level === "error" ? "error" : "info", duration: 9000 });
+  toast(ev.body ? `${ev.title}: ${ev.body}` : ev.title, { action: open, type: ev.level === "error" || ev.level === "critical" ? "error" : "info", duration: 9000 });
   avatars.pulse(1);
   announce(`${ev.title}. ${ev.body || ""}`);
-  if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) {
-    const n = new Notification(ev.title, { body: ev.body || "", icon: "/static/favicon.svg", tag: ev.conversation_id || undefined });
-    n.onclick = () => {
-      window.focus();
-      if (ev.conversation_id) navigate(ev.conversation_id);
-      n.close();
-    };
-  }
+  if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) showSystemNotification(ev);
   sidebar.refresh();
+});
+
+/** Through the service worker when there is one (Android Chrome only allows that), else directly. */
+async function showSystemNotification(ev) {
+  const url = ev.conversation_id ? `/#/c/${ev.conversation_id}` : "/";
+  const options = { body: ev.body || "", icon: "/static/icons/icon-192.png", tag: ev.conversation_id || undefined, data: { url } };
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    if (registration) return registration.showNotification(ev.title, options);
+  } catch {
+    /* Fall through to a page notification. */
+  }
+  const n = new Notification(ev.title, options);
+  n.onclick = () => {
+    window.focus();
+    if (ev.conversation_id) navigate(ev.conversation_id);
+    n.close();
+  };
+}
+
+navigator.serviceWorker?.addEventListener?.("message", (e) => {
+  if (e.data?.type === "navigate" && typeof e.data.url === "string" && e.data.url.startsWith("/")) {
+    location.hash = new URL(e.data.url, location.origin).hash || "#/";
+  }
 });
 
 socket.on("conversations.changed", () => sidebar.refresh());
@@ -269,8 +378,24 @@ socket.on("title", (ev) => {
 
 socket.on("model", (ev) => {
   state.runModel = ev.model;
+  state.runMachine = ev.machine || "";
+  renderNode();
   renderStats();
 });
+
+socket.on("activity", (ev) => {
+  state.activity = ev;
+  if (!state.run && ["idle", "offline", "happy", "error"].includes(currentStatus)) setStatus(ev.state === "idle" ? "idle" : ev.state, undefined, ev.tool);
+  else if (!state.run && ev.state === "idle") setStatus("idle");
+  if (ev.machine && !state.run) {
+    state.runMachine = ev.machine;
+    renderNode();
+  }
+});
+
+socket.on("approval.pending", (ev) => approvals.add(ev));
+socket.on("routines.changed", () => loadRoutines());
+socket.on("approval.resolved", (ev) => approvals.remove(ev.id));
 
 document.addEventListener("bagley:renamed", (e) => {
   if (e.detail.id === state.activeId) setTitle(e.detail.title);
@@ -303,7 +428,8 @@ function updateComposer() {
   const btn = $("#send-btn");
   const running = Boolean(state.run);
   btn.classList.toggle("stop", running);
-  btn.replaceChildren(icon(running ? "square" : "arrow-up"));
+  $("#composer").classList.toggle("running", running);
+  btn.replaceChildren(...(running ? [el("span", { class: "spinner" }), "Stop"] : ["Send"]));
   btn.setAttribute("aria-label", running ? "Stop reply" : "Send message");
   btn.title = running ? "Stop (Esc)" : "Send (Enter)";
   const hasContent = input.value.trim() || attachments.ready.length;
@@ -319,9 +445,10 @@ function submit() {
     toast("Still attaching files…");
     return;
   }
-  const typed = input.value.trim() || (attachments.ready.length ? "Take a look at the attached file." : "");
+  const images = attachments.images();
+  const typed = input.value.trim() || (images.length ? "What's in this image?" : attachments.ready.length ? "Take a look at the attached file." : "");
   if (!typed) return;
-  if (chat.send(typed + attachments.note())) {
+  if (chat.send(typed + attachments.note(), { images, mode: state.activeId ? null : currentMode() })) {
     input.value = "";
     attachments.clear();
     autosize();
@@ -356,10 +483,11 @@ input.addEventListener("blur", () => {
   if (!state.run && avatars.list[0]?.name === "listening") setStatus("idle");
 });
 
-// Voice input
-if (voice.canListen) {
+// Voice input: the browser's recognition, or whisper.cpp on the server when chosen.
+{
   const mic = $("#mic-btn");
-  mic.hidden = false;
+  mic.hidden = !voice.canListen;
+  bus.on("prefs", () => (mic.hidden = !voice.canListen));
   let stopListening = null;
   mic.addEventListener("click", () => {
     if (stopListening) {
@@ -369,7 +497,7 @@ if (voice.canListen) {
     const before = input.value ? `${input.value.trimEnd()} ` : "";
     mic.classList.add("recording");
     mic.setAttribute("aria-pressed", "true");
-    setStatus("listening", "Listening…");
+    setStatus("listening", "Listening");
     stopListening = voice.listen({
       onText: (text) => {
         input.value = before + text;
@@ -400,7 +528,7 @@ function currentModel() {
 }
 
 function renderModelButton() {
-  const name = currentModel();
+  const name = (state.run && state.runModel) || state.route?.model || currentModel();
   $("#model-name").textContent = name || (state.health?.ok ? "No model" : "Model");
   const btn = $("#model-btn");
   btn.title = state.prefs?.locked.includes("model") ? "Model set by BAGLEY_MODEL" : "Switch model";
@@ -411,8 +539,9 @@ $("#model-btn").addEventListener("click", () => {
   if (picker.querySelector(".menu")) return closeMenus();
   loadModels();
   openMenu(picker, (menu) => {
+    menu.classList.add("menu-left");
     const lockedModel = state.prefs?.locked.includes("model");
-    menu.append(el("div", { class: "menu-label", text: "Model" }));
+    menu.append(el("div", { class: "menu-label", text: `Model // ${state.prefs?.machine || "this machine"}` }));
     if (!state.models.length) {
       menu.append(el("div", { class: "menu-note", text: state.health?.ok ? "No models installed yet." : "Model server is not reachable." }));
     }
@@ -423,17 +552,35 @@ $("#model-btn").addEventListener("click", () => {
         onclick: async () => {
           menu.close();
           if (m.name !== current && (await savePrefs({ model: m.name }))) {
-            await refreshHealth();
+            await Promise.all([refreshHealth(), loadMachines()]);
             toast(`Switched to ${m.name}`);
           }
         },
       },
       icon(m.name === current ? "check" : "cpu", "icon-sm"),
       el("span", { class: "grow mono", text: m.name }),
-      el("span", { class: "subtle", style: "font-size:12px", text: [m.parameter_size, formatBytes(m.size)].filter(Boolean).join(" · ") })));
+      el("span", { class: "subtle", style: "font-size:.72rem", text: [m.parameter_size, formatBytes(m.size)].filter(Boolean).join(" · ") })));
+    }
+    const machines = state.prefs?.values.machines || [];
+    if (machines.length) {
+      menu.append(el("div", { class: "menu-sep" }), el("div", { class: "menu-label", text: "Routing" }));
+      const routes = [["auto", "Automatic", "GPU first, then here, then cloud"], ["local", state.prefs.machine, "Only this machine"], ...machines.map((m) => [m.id, m.name, `${m.role.toUpperCase()} · ${m.model || "auto model"}`])];
+      for (const [id, label, note] of routes) {
+        const selected = (state.prefs.values.routing || "auto") === id;
+        menu.append(el("button", {
+          class: "menu-item", type: "button", role: "option", "aria-selected": String(selected),
+          onclick: async () => {
+            menu.close();
+            if (await savePrefs({ routing: id })) {
+              await loadMachines();
+              toast(`Routing: ${label}`);
+            }
+          },
+        }, icon(selected ? "check" : id === "auto" ? "zap" : "hard-drive", "icon-sm"), el("span", { class: "grow", text: label }), el("span", { class: "subtle", style: "font-size:.72rem", text: note })));
+      }
     }
     menu.append(el("div", { class: "menu-sep" }),
-      el("button", { class: "menu-item", type: "button", onclick: () => { menu.close(); settings.open("model"); } }, icon("settings", "icon-sm"), el("span", { class: "grow", text: "Model settings…" })));
+      el("button", { class: "menu-item", type: "button", onclick: () => { menu.close(); settings.open("model"); } }, icon("settings", "icon-sm"), el("span", { class: "grow", text: "Model and machines…" })));
   });
 });
 
@@ -468,8 +615,13 @@ titleBtn.addEventListener("click", () => {
   field.addEventListener("blur", () => finish(true));
 });
 
+$("#routine-btn").addEventListener("click", () => state.activeId && saveFromChat(state.activeId));
 $("#export-btn").addEventListener("click", () => {
   if (state.activeId) location.href = `/api/conversations/${state.activeId}/export`;
+});
+$("#home-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  newChat();
 });
 
 // Presence panel ---------------------------------------------------------------------------------
@@ -486,29 +638,48 @@ $("#presence-toggle").addEventListener("click", () => setUi("presence", !state.u
 function stat(iconName, key, valueNode, onClick, extra) {
   const tag = onClick ? "button" : "div";
   return el(tag, { class: "stat", type: onClick ? "button" : null, onclick: onClick || null },
-    icon(iconName, "icon-sm"), el("span", { class: "k", text: key }), valueNode, extra);
+    el("span", { class: "k", text: key }), valueNode, extra);
+}
+
+function machineName() {
+  return (state.run && state.runMachine) || state.lastStats?.machine || state.route?.machine || state.prefs?.machine || "";
+}
+
+function renderNode() {
+  const name = machineName();
+  const routed = state.route;
+  bar.setNode(name, routed ? Boolean(routed.ok) : state.health ? Boolean(state.health.ok) : undefined);
+  const role = routed?.role ? ` // ${routed.role.toUpperCase()}` : "";
+  $("#presence-node").textContent = name ? `Node ${name}${role}` : "";
+  renderModelButton();
 }
 
 function renderStats() {
   const stats = $("#stats");
   if (!stats) return;
-  const modelName = state.runModel && state.run ? state.runModel : currentModel();
+  const modelName = state.runModel && state.run ? state.runModel : state.lastStats?.model || state.route?.model || currentModel();
   const info = state.models.find((m) => m.name === modelName);
   const s = state.lastStats || {};
   const ctxLimit = state.prefs?.values.context_tokens || 8192;
   const used = s.prompt_tokens || 0;
   const pct = Math.min(100, (used / ctxLimit) * 100);
   const enabledTools = state.tools.filter((t) => t.enabled).length;
+  const asking = state.tools.filter((t) => t.permission === "ask").length;
+  const mode = state.prefs?.modes.find((m) => m.id === currentMode());
   const ctxBar = el("div", { class: "ctx-bar", title: `${used} of ${ctxLimit} tokens` }, el("i", { style: `width:${pct}%` }));
+  const machines = state.machines?.machines || [];
+  const online = machines.filter((m) => m.ok).length;
   stats.replaceChildren(
     stat("cpu", "Model", el("span", { class: "v mono", text: modelName ? `${modelName}${info?.parameter_size ? ` · ${info.parameter_size}` : ""}` : "–" }), () => settings.open("model")),
-    stat("gauge", "Speed", el("span", { class: "v", text: s.tokens_per_second ? `${Math.round(s.tokens_per_second)} tokens/s` : "–" })),
+    stat("hard-drive", "Node", el("span", { class: `v${state.route && !state.route.ok ? " bad" : ""}`, text: machineName() ? `${machineName()}${machines.length > 1 ? ` · ${online}/${machines.length} online` : ""}` : "–" }), () => settings.open("model")),
+    stat("sparkles", "Mode", el("span", { class: "v", text: mode ? mode.label : "–" })),
+    stat("gauge", "Speed", el("span", { class: "v", text: s.tokens_per_second ? `${Math.round(s.tokens_per_second)} tok/s` : "–" })),
     el("div", { class: "stat", style: "flex-direction:column;align-items:stretch;gap:0" },
-      el("div", { style: "display:flex;gap:12px;align-items:center" }, icon("brain", "icon-sm"), el("span", { class: "k", text: "Context" }),
+      el("div", { style: "display:flex;gap:10px;align-items:center" }, el("span", { class: "k", text: "Context" }),
         el("span", { class: "v", text: used ? `${formatTokens(used)} / ${formatTokens(ctxLimit)}` : `${formatTokens(ctxLimit)} window` })),
       used ? ctxBar : null,
     ),
-    stat("wrench", "Tools", el("span", { class: "v", text: `${enabledTools} enabled` }), () => settings.open("tools")),
+    stat("wrench", "Tools", el("span", { class: "v", text: `${enabledTools} enabled${asking ? ` · ${asking} ask` : ""}` }), () => settings.open("tools")),
     stat("calendar-clock", "Automations", el("span", { class: "v", text: automationText() }), () => settings.open("automations")),
     stat("library", "Knowledge", el("span", { class: "v", text: state.knowledge ? (state.knowledge.state === "indexing" ? "Indexing…" : `${state.knowledge.files} files`) : "–" }), () => settings.open("knowledge")),
     stat("bookmark", "Memory", el("span", { class: "v", text: `${state.memories.length} ${state.memories.length === 1 ? "fact" : "facts"}` }), () => settings.open("memory")),
@@ -540,10 +711,12 @@ function isLocalServer() {
 }
 
 function renderPrivacy() {
-  const local = isLocalServer();
-  const text = local ? "Local model · stays on this machine" : "Remote model server";
-  $("#presence-foot").replaceChildren(icon(local ? "lock" : "globe", "icon-xs"), text);
-  $("#privacy").replaceChildren(icon(local ? "lock" : "globe", "icon-xs"), local ? "Runs locally" : "Remote model");
+  const role = state.route?.role;
+  const cloud = role === "cloud" || (!role && !isLocalServer());
+  const gpu = role === "gpu";
+  const text = cloud ? "Hosted model · leaves your network" : gpu ? `Your GPU · ${machineName()} over your network` : "Local model · stays on this machine";
+  $("#presence-foot").replaceChildren(icon(cloud ? "globe" : "lock", "icon-xs"), text);
+  $("#privacy").replaceChildren(icon(cloud ? "globe" : "lock", "icon-xs"), cloud ? "Hosted model" : gpu ? `Node ${machineName()}` : "Runs locally");
 }
 
 function renderConnection() {
@@ -552,16 +725,19 @@ function renderConnection() {
   const h = state.health;
   if (!state.connected) {
     dot.className = "dot warn";
-    label.textContent = "Reconnecting to Bagley…";
+    label.textContent = "Reconnecting";
   } else if (!h) {
     dot.className = "dot";
-    label.textContent = "Checking model server…";
+    label.textContent = "Checking model server";
   } else if (h.ok && h.models) {
     dot.className = "dot ok";
-    label.textContent = `${h.provider === "ollama" ? "Ollama" : "OpenAI-compatible"} · ${h.models} model${h.models === 1 ? "" : "s"}`;
+    label.textContent = `Online // ${h.models} model${h.models === 1 ? "" : "s"}`;
   } else if (h.ok) {
     dot.className = "dot warn";
     label.textContent = "No models installed";
+  } else if (routedElsewhere()) {
+    dot.className = "dot ok";
+    label.textContent = `Online // ${state.route.machine}`;
   } else {
     dot.className = "dot bad";
     label.textContent = "Model server offline";
@@ -571,7 +747,7 @@ function renderConnection() {
 
 $("#conn-status").addEventListener("click", () => settings.open("model"));
 
-// Empty state: suggestions and onboarding --------------------------------------------------------
+// Empty state: greeter, suggestions, boot log and onboarding -------------------------------------
 
 const SUGGESTIONS = [
   { icon: "cloud-sun", title: "Weekend weather", text: "What's the weather in Lisbon this weekend?" },
@@ -579,18 +755,45 @@ const SUGGESTIONS = [
   { icon: "globe", title: "Catch up", text: "Search the web for today's top tech headlines" },
   { icon: "bookmark", title: "Teach me", text: "Remember that I prefer metric units and Python examples" },
 ];
+const STARTER_ICONS = ["sparkles", "list-checks", "book-open", "zap"];
 
 function renderSuggestions() {
-  $("#greeting").textContent = timeOfDay();
-  $("#suggestions").replaceChildren(...SUGGESTIONS.map((s) => el("button", {
+  $("#greeting").textContent = `${timeOfDay()}${state.info?.user ? `, ${state.info.user}` : ""}.`;
+  const mode = state.prefs?.modes.find((m) => m.id === currentMode());
+  const starters = mode && mode.id !== "default" && mode.starters?.length
+    ? mode.starters.map((s, i) => ({ icon: STARTER_ICONS[i % STARTER_ICONS.length], title: s.title, text: s.text }))
+    : SUGGESTIONS;
+  if (mode && mode.id !== "default") $("#empty-lead").textContent = `${mode.label} mode. ${mode.description}`;
+  else $("#empty-lead").textContent = "Ask anything. Bagley can search the web, read pages, check the weather, do exact maths, work with files in your workspace and remember what matters to you.";
+  $("#suggestions").replaceChildren(...starters.map((s) => el("button", {
     class: "suggestion", type: "button",
     onclick: () => {
       input.value = s.text;
       autosize();
       updateComposer();
-      submit();
+      if (s.text.endsWith(": ") || s.text.endsWith(" ")) input.focus();
+      else submit();
     },
   }, el("span", { class: "tool-icon" }, icon(s.icon, "icon-sm")), el("div", {}, el("strong", { text: s.title }), el("span", { text: s.text })))));
+}
+
+/** The greeter's log, in the ctOS voice, from real state. */
+function renderBootlog() {
+  const box = $("#bootlog");
+  const h = state.health;
+  const lines = [];
+  const machine = state.prefs?.machine || state.info?.machine || "LOCAL";
+  lines.push(["REGION_LINK_ESTABLISHED : ", machine, ""]);
+  if (h?.ok) lines.push(["MODEL_SERVER // ", `${(h.provider || "").toUpperCase()} ${h.version || ""}`.trim(), " OK", "ok"]);
+  else if (h) lines.push(["MODEL_SERVER // ", "NO SIGNAL", "", "bad"]);
+  if (h?.model) lines.push(["MODEL_LOADED // ", h.model, ""]);
+  const machines = state.machines?.machines || [];
+  for (const m of machines.filter((x) => x.id !== "local")) lines.push([`NODE ${m.name} <-> `, m.ok ? `${m.latency_ms ?? "?"}MS` : "OFFLINE", "", m.ok ? "ok" : "bad"]);
+  if (state.knowledge) lines.push(["KNOWLEDGE_INDEX // ", `${state.knowledge.files} FILES`, ""]);
+  const armed = state.automations.filter((a) => a.enabled).length;
+  lines.push(["AUTOMATIONS // ", `${armed} ARMED`, ""]);
+  lines.push(["◈ [BAGLEY] ", "using Protocol::", "BAGLEY_ASSIST"]);
+  box.replaceChildren(...lines.map(([label, value, tail, cls]) => el("li", {}, el("span", { class: "g", text: label }), el("span", { class: cls || "", text: value }), tail ? el("span", { class: "g", text: tail }) : null)));
 }
 
 function cmdLine(text) {
@@ -603,7 +806,7 @@ function renderSetup() {
   const box = $("#setup");
   const h = state.health;
   const suggestions = $("#suggestions");
-  if (!h || (h.ok && h.models && h.installed !== false)) {
+  if (!h || (h.ok && h.models && h.installed !== false) || (!h.ok && routedElsewhere())) {
     box.hidden = true;
     suggestions.hidden = false;
     return;
@@ -612,6 +815,10 @@ function renderSetup() {
   box.hidden = false;
   const retry = el("button", { class: "btn btn-primary", type: "button", onclick: async () => { retry.disabled = true; await refreshHealth(); await loadModels(); retry.disabled = false; } }, icon("refresh-cw", "icon-sm"), "Check again");
   const openSettings = el("button", { class: "btn", type: "button", onclick: () => settings.open("model") }, icon("settings", "icon-sm"), "Model settings");
+  const useKey = el("button", { class: "btn", type: "button", onclick: () => {
+    settings.open("model");
+    $("#settings-panel .hosted")?.scrollIntoView({ block: "center" });
+  } }, icon("key-round", "icon-sm"), "Use an API key");
 
   if (!h.ok) {
     box.replaceChildren(
@@ -620,9 +827,10 @@ function renderSetup() {
       el("ol", { class: "steps" },
         el("li", {}, "Install ", el("a", { href: "https://ollama.com/download", target: "_blank", rel: "noopener", text: "Ollama" }), " (or start LM Studio, llama.cpp or any OpenAI-compatible server)."),
         el("li", {}, "Download a model with tool support:", cmdLine("ollama pull qwen3:4b")),
-        el("li", {}, "Make sure the server is running, then check again. Using another server or port? Change it in model settings."),
+        el("li", {}, "Make sure the server is running, then check again. Using another server, port or your GPU machine? Change it in model settings."),
+        el("li", {}, "No local model? Use Claude or another hosted API with your own key."),
       ),
-      el("div", { class: "setup-actions" }, retry, openSettings),
+      el("div", { class: "setup-actions" }, retry, openSettings, useKey),
     );
     return;
   }
@@ -662,7 +870,7 @@ function renderSetup() {
 
 async function useModel(name) {
   if (await savePrefs({ model: name })) {
-    await Promise.all([loadModels(), refreshHealth()]);
+    await Promise.all([loadModels(), refreshHealth(), loadMachines()]);
     toast(`Using ${name}`);
   }
 }
@@ -693,6 +901,7 @@ const SHORTCUTS = [
   ["Stop reply", "Esc"],
   ["Edit last message", "↑"],
   ["Copy last reply", "mod+shift+c"],
+  ["Next mode", "mod+shift+m"],
   ["Toggle Bagley panel", "mod+."],
   ["Settings", "mod+,"],
   ["Keyboard shortcuts", "?"],
@@ -701,7 +910,7 @@ const SHORTCUTS = [
 function showShortcuts() {
   const dialog = $("#shortcuts-dialog");
   dialog.replaceChildren(
-    el("div", { class: "dialog-head" }, el("h2", { id: "shortcuts-title", text: "Keyboard shortcuts" }),
+    el("div", { class: "dialog-head" }, el("h2", { id: "shortcuts-title" }, el("span", { class: "barcode" }), "Keyboard shortcuts"),
       el("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: () => dialog.close() }, icon("x"))),
     el("div", { class: "dialog-body" }, el("div", { class: "shortcut-list" },
       ...SHORTCUTS.flatMap(([label, combo]) => [el("span", { text: label }), el("span", {}, ...combo.split(" ").map((c) => el("kbd", { text: c.includes("+") ? kbdLabel(c) : c })))]),
@@ -720,7 +929,12 @@ addEventListener("keydown", (e) => {
   else if (mod && !e.shiftKey && key === "k") { e.preventDefault(); if (innerWidth <= 860) openSidebar(true); $("#search").focus(); $("#search").select(); }
   else if (mod && key === ",") { e.preventDefault(); settings.open(); }
   else if (mod && key === ".") { e.preventDefault(); setUi("presence", !state.ui.presence); }
-  else if (mod && e.shiftKey && key === "c" && !typing) {
+  else if (mod && e.shiftKey && key === "m") {
+    e.preventDefault();
+    const modes = state.prefs?.modes || [];
+    const i = modes.findIndex((m) => m.id === currentMode());
+    if (modes.length) setMode(modes[(i + 1) % modes.length].id);
+  } else if (mod && e.shiftKey && key === "c" && !typing) {
     e.preventDefault();
     const text = chat.lastReplyText();
     if (text) copyText(text).then(() => toast("Copied last reply"));
@@ -735,40 +949,47 @@ addEventListener("keydown", (e) => {
 // Appearance -------------------------------------------------------------------------------------
 
 const systemLight = matchMedia("(prefers-color-scheme: light)");
-function applyAppearance() {
+function applyTheme() {
   const root = document.documentElement;
   const theme = state.ui.theme === "system" ? (systemLight.matches ? "light" : "dark") : state.ui.theme;
   root.dataset.theme = theme;
-  root.style.setProperty("--accent-h", state.ui.accent);
-  // Blue-violet hues are dark at equal lightness; lift them to keep text on them readable.
-  root.style.setProperty("--accent-l", state.ui.accent >= 230 && state.ui.accent <= 290 ? "70%" : "62%");
   root.classList.toggle("reduce-motion", Boolean(state.ui.reduceMotion));
-  document.querySelector('meta[name="theme-color"]').content = theme === "light" ? "#f7f8fa" : "#090b0f";
+  applyAppearance();
 }
-systemLight.addEventListener("change", applyAppearance);
+systemLight.addEventListener("change", applyTheme);
 
 bus.on("ui", (key) => {
-  if (["theme", "accent", "reduceMotion"].includes(key)) applyAppearance();
+  if (["theme", "reduceMotion"].includes(key)) applyTheme();
   if (key === "presence") applyPresence();
   if (key === "speak") renderStats();
 });
 
+// Installable app (phone over Tailscale) -------------------------------------------------------
+
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+}
+
 // Boot -------------------------------------------------------------------------------------------
 
 async function boot() {
-  applyAppearance();
+  applyTheme();
   applyPresence();
   renderSuggestions();
+  renderBootlog();
   updateComposer();
   setStatus("idle");
+  bar.pollStats();
   try {
-    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), sidebar.refresh()]);
+    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), loadRoutines(), sidebar.refresh()]);
     state.info = info;
+    document.documentElement.style.setProperty("--who", JSON.stringify((info.user || "operator").toUpperCase()));
+    renderSuggestions();
   } catch (err) {
     toast(err.message, { type: "error" });
   }
   await route();
-  await Promise.all([refreshHealth(), loadModels()]);
+  await Promise.all([refreshHealth(), loadModels(), loadMachines()]);
   addEventListener("focus", () => { if (!state.health?.ok) refreshHealth(); });
   if (innerWidth > 860) input.focus();
 }

@@ -422,6 +422,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("-c", "--conversation", help="Continue a conversation by id")
 
     sub.add_parser("doctor", help="Check configuration and model server")
+
+    from bagley.commands import register_all
+
+    register_all(sub)
     common(parser)
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--log-level", default="warning", help=argparse.SUPPRESS)
@@ -429,7 +433,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from bagley.service import env_path
+
     load_dotenv(Path.cwd() / ".env")
+    load_dotenv(env_path())  # ~/.config/bagley/env (`bagley env`); the local .env wins.
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, str(getattr(args, "log_level", "warning")).upper(), logging.WARNING),
@@ -437,4 +444,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     command = args.command or "serve"
     handlers = {"serve": cmd_serve, "chat": cmd_chat, "ask": cmd_ask, "doctor": cmd_doctor}
-    return handlers[command](args)
+    if command in handlers:
+        return handlers[command](args)
+    return int(args.func(args) or 0)

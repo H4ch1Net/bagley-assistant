@@ -71,7 +71,10 @@ def system_prompt(
     prompt_mode: bool,
     knowledge: dict[str, Any] | None = None,
     now: datetime | None = None,
+    mode: str | None = None,
 ) -> str:
+    from bagley.modes import mode_prompt
+
     now = now or datetime.now().astimezone()
     persona = PERSONAS.get(prefs.persona, PERSONAS["bagley"])["prompt"]
     sections = [
@@ -80,6 +83,8 @@ def system_prompt(
         f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname()}). "
         f"Operating system: {platform.system() or 'unknown'}.",
     ]
+    if extra := mode_prompt(mode, prefs):
+        sections.append(extra)
     if tools:
         guide = TOOL_GUIDE
         if any(t.category == "files" for t in tools):

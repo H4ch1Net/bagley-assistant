@@ -9,7 +9,14 @@ from starlette.websockets import WebSocketDisconnect
 from bagley.server import create_app
 from tests.mock_llm import Reply
 
-BROADCASTS = {"knowledge.changed", "automations.changed", "conversations.changed"}
+BROADCASTS = {
+    "knowledge.changed",
+    "automations.changed",
+    "conversations.changed",
+    "activity",
+    "approval.pending",
+    "approval.resolved",
+}
 WS = "ws://localhost/api/ws"  # The test client defaults to Host "testserver", which the guard rejects.
 
 

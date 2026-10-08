@@ -20,6 +20,11 @@ export const state = {
   info: null,
   lastStats: null,
   connected: false,
+  approvals: [],
+  activity: null, // What any run is doing (desktop overlay, phone, automations).
+  activeMode: "default", // Mode of the open chat.
+  nextMode: null, // Mode the next new chat starts in.
+  runMachine: "", // Machine answering the current run.
   ui: {
     presence: storage.get("presence", true),
     speak: storage.get("speak", false),
@@ -40,16 +45,16 @@ export function setUi(key, value) {
 
 export const STATUS_TEXT = {
   idle: "Ready",
-  listening: "Listening…",
-  thinking: "Thinking…",
-  reasoning: "Reasoning…",
-  writing: "Writing…",
-  tool: "Working…",
-  approval: "Needs your approval",
+  listening: "Input",
+  thinking: "Thinking",
+  reasoning: "Reasoning",
+  writing: "Transmitting",
+  tool: "Executing",
+  approval: "Awaiting approval",
   speaking: "Speaking",
   happy: "Done",
-  error: "Something went wrong",
-  offline: "Offline",
+  error: "Error",
+  offline: "No signal",
 };
 
 export function toolInfo(name) {
@@ -85,8 +90,50 @@ const TOOL_ICONS = {
   remember: "bookmark",
   forget: "eraser",
   run_command: "terminal",
+  list_windows: "app-window",
+  desktop_status: "monitor",
+  switch_workspace: "layers",
+  focus_window: "app-window",
+  move_window: "app-window",
+  close_window: "x",
+  launch_app: "app-window",
+  media: "music",
+  volume: "volume-2",
+  wifi: "wifi",
+  power_profile: "zap",
+  set_up_scene: "layers",
+  list_routines: "workflow",
+  run_routine: "workflow",
+  save_routine: "workflow",
+  what_was_i_doing: "history",
+  weekly_recap: "history",
+  add_flashcards: "graduation-cap",
+  due_flashcards: "graduation-cap",
+  grade_flashcard: "graduation-cap",
+  list_decks: "graduation-cap",
+  study_material: "book-open",
+  start_study_session: "timer",
+  system_health: "radar",
+  security_check: "shield-alert",
+  cve_lookup: "shield-alert",
+  decode: "code",
+  identify_hash: "key-round",
+  explain_port: "network",
+  scan_ports: "radar",
+  tls_check: "lock",
+  analyze_log: "text-search",
+  list_assets: "server",
+  add_asset: "server",
+  update_asset: "server",
+  remove_asset: "trash-2",
+  check_client_health: "activity",
+  summarize_ticket: "ticket",
 };
-const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench", automation: "calendar-clock", knowledge: "library" };
+const CATEGORY_ICONS = {
+  web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench",
+  automation: "calendar-clock", knowledge: "library", desktop: "app-window", routines: "workflow",
+  security: "shield-alert", work: "briefcase", study: "graduation-cap", life: "history",
+}; // prettier-ignore
 
 export function toolIcon(name, category) {
   return TOOL_ICONS[name] || CATEGORY_ICONS[category || toolInfo(name)?.category] || "wrench";

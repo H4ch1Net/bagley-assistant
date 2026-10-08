@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -69,6 +69,21 @@ CREATE TABLE IF NOT EXISTS automations (
     state           TEXT,
     created_at      REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS audit (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      REAL NOT NULL,
+    conversation_id TEXT,
+    source          TEXT NOT NULL DEFAULT 'web',
+    tool            TEXT NOT NULL,
+    arguments       TEXT,
+    permission      TEXT NOT NULL,
+    decision        TEXT NOT NULL,
+    ok              INTEGER,
+    duration_ms     INTEGER,
+    sandboxed       INTEGER NOT NULL DEFAULT 0,
+    detail          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(created_at);
 """
 
 AUTOMATION_FIELDS = {
@@ -104,6 +119,10 @@ class Store:
                 self._db.execute(
                     "ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0"
                 )
+            if "mode" not in columns:  # Added in schema 3.
+                self._db.execute(
+                    "ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'default'"
+                )
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._db.commit()
         self.purge_trash()
@@ -126,20 +145,46 @@ class Store:
         with self._lock:
             return self._db.execute(sql, params).fetchone()
 
+    # Feature modules keep their own tables in the same database.
+
+    def ensure_schema(self, sql: str) -> None:
+        """Create a feature's tables (``CREATE TABLE IF NOT EXISTS ...`` statements)."""
+        with self._lock:
+            self._db.executescript(sql)
+            self._db.commit()
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+        return self._exec(sql, params)
+
+    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._all(sql, params)]
+
+    def query_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        row = self._one(sql, params)
+        return dict(row) if row else None
+
     # Conversations ------------------------------------------------------------------------
 
-    def create_conversation(self, title: str = "New chat") -> dict[str, Any]:
+    def create_conversation(self, title: str = "New chat", mode: str = "default") -> dict[str, Any]:
         cid = uuid.uuid4().hex[:12]
         now = _now()
         self._exec(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (cid, title, now, now),
+            "INSERT INTO conversations (id, title, created_at, updated_at, mode) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (cid, title, now, now, mode),
         )
-        return {"id": cid, "title": title, "created_at": now, "updated_at": now, "unread": 0}
+        return {
+            "id": cid,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "unread": 0,
+            "mode": mode,
+        }
 
     def get_conversation(self, cid: str) -> dict[str, Any] | None:
         row = self._one(
-            "SELECT id, title, created_at, updated_at, unread FROM conversations "
+            "SELECT id, title, created_at, updated_at, unread, mode FROM conversations "
             "WHERE id = ? AND deleted_at IS NULL",
             (cid,),
         )
@@ -150,7 +195,8 @@ class Store:
             escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
             rows = self._all(
-                "SELECT c.id, c.title, c.created_at, c.updated_at, c.unread FROM conversations c "
+                "SELECT c.id, c.title, c.created_at, c.updated_at, c.unread, c.mode "
+                "FROM conversations c "
                 "WHERE c.deleted_at IS NULL AND (c.title LIKE ? ESCAPE '\\' OR EXISTS ("
                 "  SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
                 "  AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\')) "
@@ -159,7 +205,7 @@ class Store:
             )
         else:
             rows = self._all(
-                "SELECT id, title, created_at, updated_at, unread FROM conversations "
+                "SELECT id, title, created_at, updated_at, unread, mode FROM conversations "
                 "WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             )
@@ -169,6 +215,12 @@ class Store:
         title = " ".join(title.split())[:120] or "Untitled"
         cur = self._exec(
             "UPDATE conversations SET title = ? WHERE id = ? AND deleted_at IS NULL", (title, cid)
+        )
+        return cur.rowcount > 0
+
+    def set_mode(self, cid: str, mode: str) -> bool:
+        cur = self._exec(
+            "UPDATE conversations SET mode = ? WHERE id = ? AND deleted_at IS NULL", (mode, cid)
         )
         return cur.rowcount > 0
 
@@ -315,6 +367,46 @@ class Store:
             tuple(ids),
         )
         return {r["id"] for r in rows}
+
+    # Audit log ----------------------------------------------------------------------------
+
+    def add_audit(self, **fields: Any) -> int:
+        keys = ["conversation_id", "source", "tool", "arguments", "permission", "decision"]
+        keys += ["ok", "duration_ms", "sandboxed", "detail"]
+        values = [fields.get(k) for k in keys]
+        values[keys.index("source")] = fields.get("source") or "web"
+        values[keys.index("arguments")] = json.dumps(fields.get("arguments") or {})[:4000]
+        values[keys.index("sandboxed")] = int(bool(fields.get("sandboxed")))
+        if fields.get("ok") is not None:
+            values[keys.index("ok")] = int(bool(fields["ok"]))
+        cur = self._exec(
+            f"INSERT INTO audit ({', '.join(keys)}, created_at) VALUES ({', '.join('?' * len(keys))}, ?)",
+            (*values, _now()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def list_audit(
+        self, limit: int = 200, *, after: int = 0, tool: str = "", conversation_id: str = ""
+    ) -> list[dict[str, Any]]:
+        where, params = ["id > ?"], [after]
+        if tool:
+            where.append("tool = ?")
+            params.append(tool)
+        if conversation_id:
+            where.append("conversation_id = ?")
+            params.append(conversation_id)
+        rows = self._all(
+            f"SELECT * FROM audit WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
+            (*params, max(1, min(limit, 2000))),
+        )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["arguments"] = json.loads(item["arguments"]) if item.get("arguments") else {}
+            item["ok"] = None if item["ok"] is None else bool(item["ok"])
+            item["sandboxed"] = bool(item["sandboxed"])
+            out.append(item)
+        return out
 
     # Automations ---------------------------------------------------------------------------
 

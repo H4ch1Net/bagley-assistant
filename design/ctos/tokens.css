@@ -1,0 +1,131 @@
+/* ctOS: generated from tokens.json */
+:root, [data-theme="ctos"] {
+  --gray50: #ffffff;
+  --gray100: #cacaca;
+  --gray200: #d9d9d9;
+  --gray300: #c3c3c3;
+  --gray500: #7a7a7a;
+  --gray700: #202020;
+  --gray800: #0e0e0e;
+  --accentGreen: #00fa9a;
+  --accentRed: #fc3e38;
+  --background: var(--gray800);
+  --backgroundBright: var(--gray700);
+  --ctosGray: var(--gray200);
+  --textPrimary: var(--gray50);
+  --textPrimaryDim: var(--gray100);
+  --textPrimaryDimmer: var(--gray300);
+  --textSecondary: var(--gray500);
+  --success: var(--accentGreen);
+  --error: var(--accentRed);
+  --panel-translucent: #0e0e0eee;
+  --surface-glass: #ffffff14;
+  --date-border: #414141;
+  --date-text: #b1b1b1;
+  --barcode: #b6b6b6;
+  --emphasis: #f1f1f1;
+  --term-bg: #121212;
+  --term-fg: #cccccc;
+  --term-selection: #2a2a2a;
+  --term-tab-active: #dddddd;
+  --term-url: #708090;
+  --ansi0: #2a2a2a;
+  --ansi1: #deeeed;
+  --ansi2: #00fa9a;
+  --ansi3: #b4b4b4;
+  --ansi4: #7a7a7a;
+  --ansi5: #66b2b2;
+  --ansi6: #cccccc;
+  --ansi7: #f1f1f1;
+  --ansi8: #4a4a4a;
+  --ansi9: #708090;
+  --ansi10: #a6ffc9;
+  --ansi11: #dddddd;
+  --ansi12: #aaaaaa;
+  --ansi13: #49c4c4;
+  --ansi14: #d3d3d3;
+  --ansi15: #ffffff;
+  --window-shadow: 0 0 4px #000000ee;
+}
+:root {
+  /* spacing */
+  --bar-height: 37px;
+  --frame-inset: 6px;
+  --corner-arm: 7px;
+  --corner-margin: 4px;
+  --system-label: 105px;
+  --meter-width: 90px;
+  --meter-bar: 3px;
+  --crosshair: 9px;
+  --segment-gap: 5px;
+  --accent-dot: 4px;
+  --accent-offset-x: 18px;
+  --accent-offset-y: 10px;
+  --gaps-in: 5px;
+  --gaps-out: 12px;
+  --kitty-padding: 14px;
+  --panel-padding: 12px;
+  --launcher-padding: 14px;
+  --row-pad-y: 8px;
+  --row-pad-x: 10px;
+  --field-height: 40px;
+  --login-height: 26px;
+  --splash-width: 294px;
+  --spinner-cell: 5px;
+  --launcher-width: 560px;
+  --notification-width: 360px;
+  /* radius */
+  --radius-none: 0;
+  --radius-dot: 50%;
+  /* border */
+  --border-hairline: 1px;
+  --border-window: 2px;
+  --border-field: 2px;
+  /* opacity */
+  --terminal-opacity: 0.85;
+  --panel-alpha: 0.93;
+  --inactive-text: 0.6;
+  --workspace-hover: 0.35;
+  --accent-opacity: 0.95;
+  /* blur */
+  --hypr-blur-size: 6;
+  --hypr-blur-passes: 2;
+  --kitty-blur: 32;
+  /* duration */
+  --meter-tween: 1000ms;
+  --accent-fade: 50ms;
+  --accent-slide: 100ms;
+  --typewriter-char: 10ms;
+  --typewriter-tick: 500ms;
+  --spinner-step: 100ms;
+  --cursor-hold: 500ms;
+  --layout-slide: 500ms;
+  --auth-fill: 1000ms;
+  /* easing */
+  --ease-in-out-sine: cubic-bezier(0.37, 0, 0.63, 1);
+  --ease-in-cubic: cubic-bezier(0.32, 0, 0.67, 0);
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-circ: cubic-bezier(0.85, 0, 0.15, 1);
+  --ease-in-sine: cubic-bezier(0.12, 0, 0.39, 0);
+  --font-mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+}
+.bar-os { font-family: var(--font-mono); font-size: 36px; font-weight: 300; }
+.bar-ct { font-family: var(--font-mono); font-size: 22px; font-weight: 500; }
+.bar-segment { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
+.bar-meter { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.bar-glyph { font-family: var(--font-mono); font-size: 18px; font-weight: 600; }
+.splash-os { font-family: var(--font-mono); font-size: 64px; font-weight: 300; }
+.splash-ct { font-family: var(--font-mono); font-size: 34px; font-weight: 500; }
+.clock { font-family: var(--font-mono); font-size: 48px; font-weight: 100; }
+.date { font-family: var(--font-mono); font-size: 14px; font-weight: 300; }
+.field-label { font-family: var(--font-mono); font-size: 14px; font-weight: 400; }
+.password { font-family: var(--font-mono); font-size: 16px; font-weight: 400; letter-spacing: 5px; }
+.progress { font-family: var(--font-mono); font-size: 14px; font-weight: 500; }
+.disclaimer { font-family: var(--font-mono); font-size: 11px; font-weight: 400; }
+.log { font-family: var(--font-mono); font-size: 14px; font-weight: 400; }
+.kitty { font-family: var(--font-mono); font-size: 16px; font-weight: 400; }
+.rofi { font-family: var(--font-mono); font-size: 16px; font-weight: 400; }
+.mako { font-family: var(--font-mono); font-size: 14.67px; font-weight: 400; }
+.zed-ui { font-family: var(--font-mono); font-size: 15px; font-weight: 400; }
+.zed-buffer { font-family: var(--font-mono); font-size: 14px; font-weight: 400; }
