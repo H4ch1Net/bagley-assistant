@@ -35,7 +35,7 @@ export function render(panel, ctx) {
   const draft = ctx.automationDraft || {};
   name.value = draft.name || "";
   if (prompt) prompt.value = draft.prompt || "";
-  if (target && draft.target && !kind.target?.options) target.value = draft.target;
+  if (target && draft.target) target.value = draft.target;
   const presets = el("datalist", { id: "schedule-presets" },
     ...["in 30 minutes", "at 18:00", "every 1 hour", "every 6 hours", "daily at 08:00", "weekdays at 09:00", "weekends at 10:00", "mondays at 09:00", "fridays at 17:00"].map((v) => el("option", { value: v })));
   const hint = el("div", { class: "help", "aria-live": "polite" });

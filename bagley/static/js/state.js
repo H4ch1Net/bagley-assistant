@@ -90,8 +90,35 @@ const TOOL_ICONS = {
   remember: "bookmark",
   forget: "eraser",
   run_command: "terminal",
+  list_windows: "app-window",
+  desktop_status: "monitor",
+  switch_workspace: "layers",
+  focus_window: "app-window",
+  move_window: "app-window",
+  close_window: "x",
+  launch_app: "app-window",
+  media: "music",
+  volume: "volume-2",
+  wifi: "wifi",
+  power_profile: "zap",
+  set_up_scene: "layers",
+  list_routines: "workflow",
+  run_routine: "workflow",
+  save_routine: "workflow",
+  what_was_i_doing: "history",
+  weekly_recap: "history",
+  add_flashcards: "graduation-cap",
+  due_flashcards: "graduation-cap",
+  grade_flashcard: "graduation-cap",
+  list_decks: "graduation-cap",
+  study_material: "book-open",
+  start_study_session: "timer",
 };
-const CATEGORY_ICONS = { web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench", automation: "calendar-clock", knowledge: "library" };
+const CATEGORY_ICONS = {
+  web: "globe", files: "file-text", memory: "bookmark", system: "terminal", mcp: "plug", utility: "wrench",
+  automation: "calendar-clock", knowledge: "library", desktop: "app-window", routines: "workflow",
+  security: "shield-alert", work: "briefcase", study: "graduation-cap", life: "history",
+}; // prettier-ignore
 
 export function toolIcon(name, category) {
   return TOOL_ICONS[name] || CATEGORY_ICONS[category || toolInfo(name)?.category] || "wrench";

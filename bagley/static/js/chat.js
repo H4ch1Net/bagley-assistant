@@ -578,11 +578,24 @@ export class Chat {
     );
     card.card.append(box);
     card.approval = box;
+    if (["run_routine", "set_up_scene"].includes(ev.call.name)) this.showRoutineSteps(box, ev.call.arguments.name);
     this.follow();
     // Only take focus when the user isn't typing somewhere, so a keystroke can't approve.
     const active = document.activeElement;
     if (this.stick && (!active || active === document.body || thread().contains(active))) allow.focus({ preventScroll: true });
     announce(`Bagley needs your approval to ${summary}.`);
+  }
+
+  /** A routine's approval lists the exact steps it will run. */
+  async showRoutineSteps(box, name) {
+    if (!name) return;
+    try {
+      const routine = await api.get(`/api/routines/${encodeURIComponent(name)}`);
+      const { stepList } = await import("./routines.js");
+      box.querySelector(".approval-args")?.replaceWith(el("div", { class: "approval-args" }, stepList(routine.steps)));
+    } catch {
+      /* Unknown routine: the tool reports it when it runs. */
+    }
   }
 
   onApprovalResult(ev) {

@@ -6,6 +6,7 @@ import { Attachments } from "./attachments.js";
 import { mountAvatars } from "./avatar.js";
 import { Bar, currentMode } from "./bar.js";
 import { Chat } from "./chat.js";
+import { loadRoutines, saveFromChat } from "./routines.js";
 import { pullModel, RECOMMENDED_MODELS, savePrefs, Settings } from "./settings.js";
 import { Sidebar } from "./sidebar.js";
 import { bus, setUi, state, STATUS_TEXT } from "./state.js";
@@ -256,6 +257,7 @@ function setTitle(title) {
   btn.textContent = title || "New chat";
   btn.disabled = !state.activeId;
   $("#export-btn").disabled = !state.activeId;
+  $("#routine-btn").hidden = !state.activeId;
   document.title = title ? `${title} · Bagley` : "Bagley";
   document.dispatchEvent(new CustomEvent("bagley:chat", { detail: { id: state.activeId } }));
 }
@@ -371,6 +373,7 @@ socket.on("activity", (ev) => {
 });
 
 socket.on("approval.pending", (ev) => approvals.add(ev));
+socket.on("routines.changed", () => loadRoutines());
 socket.on("approval.resolved", (ev) => approvals.remove(ev.id));
 
 document.addEventListener("bagley:renamed", (e) => {
@@ -591,6 +594,7 @@ titleBtn.addEventListener("click", () => {
   field.addEventListener("blur", () => finish(true));
 });
 
+$("#routine-btn").addEventListener("click", () => state.activeId && saveFromChat(state.activeId));
 $("#export-btn").addEventListener("click", () => {
   if (state.activeId) location.href = `/api/conversations/${state.activeId}/export`;
 });
@@ -948,7 +952,7 @@ async function boot() {
   setStatus("idle");
   bar.pollStats();
   try {
-    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), sidebar.refresh()]);
+    const [info] = await Promise.all([api.get("/api/info"), loadPrefs(), loadTools(), loadMemories(), loadAutomations(), loadKnowledge(), loadRoutines(), sidebar.refresh()]);
     state.info = info;
     document.documentElement.style.setProperty("--who", JSON.stringify((info.user || "operator").toUpperCase()));
     renderSuggestions();

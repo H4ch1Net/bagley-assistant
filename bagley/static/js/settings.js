@@ -13,6 +13,7 @@ import * as knowledge from "./panels/knowledge.js";
 import * as memory from "./panels/memory.js";
 import * as model from "./panels/model.js";
 import * as notifications from "./panels/notifications.js";
+import * as routines from "./panels/routines.js";
 import * as tools from "./panels/tools.js";
 import * as voicePanel from "./panels/voice.js";
 
@@ -27,6 +28,7 @@ const TABS = [
   { id: "voice", label: "Voice", icon: "volume-2", panel: voicePanel },
   { group: "Automation" },
   { id: "automations", label: "Automations", icon: "calendar-clock", panel: automations },
+  { id: "routines", label: "Routines", icon: "workflow", panel: routines },
   { group: "Security" },
   { id: "tools", label: "Tools & permissions", icon: "shield-check", panel: tools },
   { id: "audit", label: "Audit log", icon: "list", panel: audit },
