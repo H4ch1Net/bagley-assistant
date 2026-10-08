@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="1" y="1" width="62" height="62" fill="#0e0e0e" stroke="#27d3ee" stroke-opacity=".4" stroke-width="2"/>
-  <path d="M8 16V8h8M48 8h8v8M56 48v8h-8M16 56H8v-8" fill="none" stroke="#e2e2e2" stroke-opacity=".7" stroke-width="2"/>
-  <path d="M28 29 45 17M28 29 47 44M28 29 16 45" stroke="#27d3ee" stroke-opacity=".7" stroke-width="2"/>
-  <path d="M45 17 47 44" stroke="#e2e2e2" stroke-opacity=".45" stroke-width="1.6" stroke-dasharray="3 3"/>
-  <path d="M28 17 40 29 28 41 16 29Z" fill="#0e0e0e" stroke="#27d3ee" stroke-width="3"/>
-  <path d="M28 24 33 29 28 34 23 29Z" fill="#27d3ee"/>
-  <rect x="42" y="14" width="6" height="6" fill="#e2e2e2"/>
-  <rect x="44" y="41" width="6" height="6" fill="#e2e2e2"/>
-  <rect x="13" y="42" width="6" height="6" fill="#e2e2e2"/>
+  <rect x="1" y="1" width="62" height="62" fill="#0e0e0e" stroke="#7a7a7a" stroke-width="2"/>
+  <path d="M8 16V8h8M48 8h8v8M56 48v8h-8M16 56H8v-8" fill="none" stroke="#ffffff" stroke-width="2"/>
+  <path d="M28 29 45 17M28 29 47 44M28 29 16 45" stroke="#d9d9d9" stroke-opacity=".6" stroke-width="2"/>
+  <path d="M45 17 47 44" stroke="#d9d9d9" stroke-opacity=".4" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <path d="M28 17 40 29 28 41 16 29Z" fill="#0e0e0e" stroke="#d9d9d9" stroke-width="3"/>
+  <path d="M28 17v6" stroke="#d9d9d9" stroke-width="2"/>
+  <path d="M28 24 33 29 28 34 23 29Z" fill="#d9d9d9"/>
+  <rect x="42" y="14" width="6" height="6" fill="#d9d9d9"/>
+  <rect x="44" y="41" width="6" height="6" fill="#d9d9d9"/>
+  <rect x="13" y="42" width="6" height="6" fill="#d9d9d9"/>
 </svg>

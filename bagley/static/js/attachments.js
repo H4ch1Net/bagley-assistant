@@ -1,9 +1,12 @@
-// Attached files: uploaded into the workspace so Bagley's file tools can read them.
+// Attached files. Text files are uploaded into the workspace so Bagley's file tools can read
+// them; images are stored as captures and shown to a vision model with the message.
 
 import { toast } from "./ui.js";
 import { $, el, formatBytes, icon } from "./util.js";
 
 const MAX_BYTES = 5_000_000;
+const MAX_IMAGE_BYTES = 12_000_000;
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 async function looksLikeText(file) {
   const head = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
@@ -27,6 +30,10 @@ export class Attachments {
 
   async add(files) {
     for (const file of files) {
+      if (IMAGE_TYPES.includes(file.type)) {
+        await this.addImage(file);
+        continue;
+      }
       if (file.size > MAX_BYTES) {
         toast(`${file.name} is larger than 5 MB.`, { type: "error" });
         continue;
@@ -51,26 +58,52 @@ export class Attachments {
     }
   }
 
+  async addImage(file) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      toast(`${file.name} is larger than 12 MB.`, { type: "error" });
+      return;
+    }
+    const item = { id: crypto.randomUUID?.() || String(Math.random()), name: file.name || "image.png", size: file.size, status: "uploading", kind: "image", preview: URL.createObjectURL(file) };
+    this.items.push(item);
+    this.render();
+    try {
+      const res = await fetch("/api/captures", { method: "POST", body: file });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Upload failed (${res.status})`);
+      item.capture = (await res.json()).name;
+      item.status = "ready";
+    } catch (err) {
+      item.status = "failed";
+      toast(`Couldn't attach ${item.name}: ${err.message}`, { type: "error" });
+    }
+    this.render();
+  }
+
+  /** Capture names of attached images, for the vision model. */
+  images() {
+    return this.ready.filter((i) => i.kind === "image").map((i) => i.capture);
+  }
+
   remove(id) {
     this.items = this.items.filter((i) => i.id !== id);
     this.render();
   }
 
   clear() {
+    for (const item of this.items) if (item.preview) URL.revokeObjectURL(item.preview);
     this.items = [];
     this.render();
   }
 
   /** Line appended to the message so the model knows where the files are. */
   note() {
-    const paths = this.ready.map((i) => i.path);
-    return paths.length ? `\n\n📎 Attached: ${paths.join(", ")}` : "";
+    const paths = this.ready.filter((i) => i.kind !== "image").map((i) => i.path);
+    return paths.length ? `\n\nAttached: ${paths.join(", ")}` : "";
   }
 
   render() {
     this.root.hidden = this.items.length === 0;
     this.root.replaceChildren(...this.items.map((item) => el("span", { class: `chip ${item.status}`, title: item.path || item.name },
-      item.status === "uploading" ? el("span", { class: "spinner" }) : icon(item.status === "failed" ? "triangle-alert" : "file-text", "icon-sm"),
+      item.status === "uploading" ? el("span", { class: "spinner" }) : item.preview && item.status === "ready" ? el("img", { src: item.preview, alt: "" }) : icon(item.status === "failed" ? "triangle-alert" : "file-text", "icon-sm"),
       el("span", { class: "name", text: item.name }),
       el("span", { class: "size", text: formatBytes(item.size) }),
       el("button", { class: "icon-btn icon-btn-sm", type: "button", "aria-label": `Remove ${item.name}`, onclick: () => this.remove(item.id) }, icon("x", "icon-xs")),

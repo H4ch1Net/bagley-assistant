@@ -340,7 +340,8 @@ def content_security_policy(html: str) -> str:
         "default-src 'self'; "
         f"script-src 'self' {hashes}; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
         "connect-src 'self' ws: wss:; "
         "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     )
@@ -386,6 +387,18 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     async def index() -> HTMLResponse:
         return HTMLResponse(index_html, headers=page_headers)
 
+    @app.get("/sw.js", include_in_schema=False)
+    async def service_worker() -> Response:
+        """The service worker lives at the root so it can control the whole app."""
+        path = STATIC_DIR / "sw.js"
+        if not path.is_file():
+            raise HTTPException(404, "Not found.")
+        return FileResponse(
+            path,
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         info = await rt().health()
@@ -395,8 +408,17 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     @app.get("/api/info")
     async def info() -> dict[str, Any]:
         r = rt()
+        prefs, _ = r.preferences()
+        import getpass
+
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = ""
         return {
             "version": __version__,
+            "user": user,
+            "machine": r.router.machines(prefs)[0].name,
             "workspace": str(r.config.workspace),
             "data_dir": str(r.config.data_dir),
             "shell_enabled": r.config.enable_shell,

@@ -1,25 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Bagley</title>
   <meta name="description" content="Bagley, a local-first AI assistant.">
-  <meta name="theme-color" content="#090b0f">
+  <meta name="theme-color" content="#0e0e0e">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="preload" href="/static/fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
   <script>
-    // Apply theme before first paint to avoid a flash.
+    // Apply the theme and the saved colours before first paint to avoid a flash.
     (function () {
       var get = function (k, d) { try { var v = localStorage.getItem("bagley." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
       var theme = get("theme", "system");
       if (theme === "system") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
       var root = document.documentElement;
       root.dataset.theme = theme;
-      var hue = get("accent", 188);
-      root.style.setProperty("--accent-h", hue);
-      root.style.setProperty("--accent-l", hue >= 230 && hue <= 290 ? "70%" : "62%");
+      var look = get("appearance", null) || {};
+      var colors = (look.colors || {})[theme] || {};
+      for (var key in colors) if (/^c-[a-z]+$/.test(key) && /^#[0-9a-f]{6}$/i.test(colors[key])) root.style.setProperty("--" + key, colors[key]);
+      if (look.scale) root.style.setProperty("--fs", look.scale + "px");
+      if (look.reading === "sans") root.style.setProperty("--font-reading", "var(--font-sans)");
+      if (look.brackets === false) root.classList.add("no-brackets");
+      if (look.grid === false) root.classList.add("no-grid");
+      if (look.caps === false) root.classList.add("no-caps");
       if (get("reduceMotion", false)) root.classList.add("reduce-motion");
     })();
   </script>
@@ -29,17 +36,61 @@
   <a class="skip-link" href="#composer-input">Skip to message box</a>
 
   <div class="app presence-open" id="app">
+    <header class="bar" id="bar">
+      <button class="icon-btn only-mobile" id="sidebar-open" aria-label="Open sidebar"><svg class="icon"><use href="/static/icons.svg#i-menu"/></svg></button>
+      <a class="syslabel" href="#/" id="home-link" aria-label="Bagley, new chat" title="New chat">
+        <span class="syslabel-block" aria-hidden="true">
+          <svg viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="miter"><path d="M17 2 32 17 17 32 2 17Z"/><path d="M17 2v9"/><path d="M17 11 23 17 17 23 11 17Z" fill="currentColor" stroke="none"/></svg>
+          <span class="ct">BAG</span>
+        </span>
+        <span class="os" aria-hidden="true">LEY</span>
+      </a>
+      <span class="bar-div"></span>
+      <div class="seg agent-seg cf" id="agent-seg" data-state="idle" title="What Bagley is doing">
+        <canvas data-avatar="mini" aria-hidden="true"></canvas>
+        <span class="code" id="agent-code">IDLE</span>
+      </div>
+      <span class="bar-div"></span>
+      <nav class="modes" id="modes" aria-label="Mode"></nav>
+      <span class="bar-div"></span>
+      <div class="model-picker" id="model-picker">
+        <button class="seg model-btn cf" id="model-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch model">
+          <span class="k">MDL</span><span id="model-name">Model</span><svg class="icon icon-xs"><use href="/static/icons.svg#i-chevron-down"/></svg>
+        </button>
+      </div>
+      <span class="bar-div"></span>
+      <button class="seg node-seg cf" id="node-btn" title="Machine answering">
+        <span class="node-dot" id="node-dot"></span><span class="k">NODE</span><span id="node-name">----</span>
+      </button>
+      <span class="bar-div"></span>
+      <span class="bar-fill"></span>
+      <span class="bar-div"></span>
+      <div class="seg meter cf" id="cpu-meter" title="CPU of the machine running Bagley">
+        <div class="row"><span>CPU</span><span class="sym">&lt;&gt;</span><span class="fill"></span><span class="val">---%</span></div>
+        <div class="track"><i></i></div>
+      </div>
+      <span class="bar-div"></span>
+      <div class="seg meter cf" id="mem-meter" title="Memory of the machine running Bagley">
+        <div class="row"><span>MEM</span><span class="sym">##</span><span class="fill"></span><span class="val">-.-G</span></div>
+        <div class="track"><i></i></div>
+      </div>
+      <span class="bar-div"></span>
+      <div class="seg bat cf" id="bat-seg" hidden><span class="g" id="bat-label">BAT=</span><span class="v" id="bat-value">---</span></div>
+      <span class="bar-div" id="bat-div" hidden></span>
+      <div class="seg clock cf" id="clock" aria-hidden="true"></div>
+    </header>
+
     <aside class="sidebar" id="sidebar" aria-label="Chats">
       <div class="sidebar-head">
-        <div class="brand"><canvas data-avatar="mini" aria-hidden="true"></canvas><span>Bagley</span></div>
-        <button class="icon-btn only-mobile" id="sidebar-close" aria-label="Close sidebar"><svg class="icon"><use href="/static/icons.svg#i-x"/></svg></button>
+        <span class="label">Sessions <span class="count" id="conv-count"></span></span>
+        <button class="icon-btn icon-btn-sm only-mobile" id="sidebar-close" aria-label="Close sidebar"><svg class="icon"><use href="/static/icons.svg#i-x"/></svg></button>
       </div>
       <button class="btn btn-primary new-chat" id="new-chat" title="New chat">
-        <svg class="icon"><use href="/static/icons.svg#i-plus"/></svg> New chat <kbd data-kbd="mod+shift+o"></kbd>
+        <svg class="icon icon-sm"><use href="/static/icons.svg#i-plus"/></svg> New chat <kbd data-kbd="mod+shift+o"></kbd>
       </button>
       <label class="search">
-        <svg class="icon icon-sm"><use href="/static/icons.svg#i-search"/></svg>
-        <input id="search" type="search" placeholder="Search chats" aria-label="Search chats" autocomplete="off">
+        <span class="prompt" aria-hidden="true">»</span>
+        <input id="search" type="search" placeholder="Search" aria-label="Search chats" autocomplete="off">
         <kbd data-kbd="mod+k"></kbd>
       </label>
       <nav class="conv-list" id="conv-list" aria-label="Chat history"></nav>
@@ -55,27 +106,33 @@
 
     <main class="main" id="main">
       <header class="topbar">
-        <button class="icon-btn only-mobile" id="sidebar-open" aria-label="Open sidebar"><svg class="icon"><use href="/static/icons.svg#i-menu"/></svg></button>
         <canvas class="topbar-avatar" data-avatar="compact" aria-hidden="true"></canvas>
         <div class="title-wrap">
           <h1 class="conv-title" id="conv-title"><button type="button" id="title-btn" title="Rename chat" disabled>New chat</button></h1>
           <div class="tb-status" id="tb-status" aria-hidden="true">Ready</div>
         </div>
-        <div class="model-picker" id="model-picker">
-          <button class="model-btn" id="model-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch model">
-            <svg class="icon icon-sm"><use href="/static/icons.svg#i-cpu"/></svg><span id="model-name">Model</span><svg class="icon icon-xs"><use href="/static/icons.svg#i-chevron-down"/></svg>
-          </button>
-        </div>
+        <button class="icon-btn" id="routine-btn" aria-label="Save as routine" title="Save actions from this chat as a routine" hidden><svg class="icon"><use href="/static/icons.svg#i-list-checks"/></svg></button>
         <button class="icon-btn" id="export-btn" aria-label="Export chat as Markdown" title="Export chat as Markdown" disabled><svg class="icon"><use href="/static/icons.svg#i-download"/></svg></button>
         <button class="icon-btn" id="presence-toggle" aria-label="Show Bagley panel" aria-pressed="true" title="Toggle Bagley panel"><svg class="icon"><use href="/static/icons.svg#i-panel-right"/></svg></button>
       </header>
+      <div class="approvals" id="approvals" role="region" aria-label="Approvals waiting" hidden></div>
 
       <section class="thread" id="thread">
         <div class="empty" id="empty">
           <canvas class="hero-avatar" data-avatar="hero" aria-hidden="true"></canvas>
+          <div class="greeter" aria-hidden="true">
+            <div class="greeter-icon accents"><i></i><i></i><i></i><i></i>
+              <svg viewBox="0 0 136 136" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"><path d="M68 1 135 68 68 135 1 68Z"/><path d="M68 1v52M1 68l67 25 67-25M68 93v42"/><path d="M68 53 92 70 68 93 44 70Z" fill="currentColor" stroke="none"/></svg>
+            </div>
+            <div>
+              <div class="greeter-clock" id="greeter-clock">00:00</div>
+              <div class="greeter-date" id="greeter-date"></div>
+            </div>
+          </div>
           <h2 id="greeting">Good evening</h2>
-          <p>Ask anything. Bagley can search the web, read pages, check the weather, do exact maths, work with files in your workspace and remember what matters to you.</p>
+          <p id="empty-lead">Ask anything. Bagley can search the web, read pages, check the weather, do exact maths, work with files in your workspace and remember what matters to you.</p>
           <div class="suggestions" id="suggestions"></div>
+          <ul class="bootlog" id="bootlog" aria-label="System status"></ul>
           <div class="setup" id="setup" hidden></div>
         </div>
         <div class="thread-inner" id="messages" role="log" aria-label="Conversation" hidden></div>
@@ -84,19 +141,28 @@
 
       <footer class="composer-wrap">
         <form class="composer" id="composer" autocomplete="off">
-          <div class="attachments" id="attachments" hidden></div>
-          <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="Attach text files" title="Attach text files (saved to your workspace)"><svg class="icon"><use href="/static/icons.svg#i-paperclip"/></svg></button>
-          <input type="file" id="file-input" multiple hidden>
-          <textarea id="composer-input" rows="1" placeholder="Message Bagley…" aria-label="Message Bagley" enterkeyhint="send"></textarea>
-          <div class="composer-actions">
-            <button type="button" class="icon-btn mic-btn" id="mic-btn" aria-label="Voice input" title="Voice input (uses your browser's speech service)" hidden><svg class="icon"><use href="/static/icons.svg#i-mic"/></svg></button>
-            <button type="submit" class="send-btn" id="send-btn" aria-label="Send message" title="Send (Enter)" disabled><svg class="icon"><use href="/static/icons.svg#i-arrow-up"/></svg></button>
+          <div class="composer-label">
+            <span class="barcode" aria-hidden="true"></span>
+            <label for="composer-input" id="composer-label">Message</label>
+            <span class="mode" id="composer-mode"></span>
+            <span class="grow"></span>
+            <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="Attach files" title="Attach text files or images"><svg class="icon icon-sm"><use href="/static/icons.svg#i-paperclip"/></svg></button>
+            <input type="file" id="file-input" multiple hidden>
+            <button type="button" class="icon-btn mic-btn" id="mic-btn" aria-label="Voice input" title="Voice input" hidden><svg class="icon icon-sm"><use href="/static/icons.svg#i-mic"/></svg></button>
+          </div>
+          <div class="composer-field">
+            <div class="attachments" id="attachments" hidden></div>
+            <span class="prompt" aria-hidden="true">»</span>
+            <textarea id="composer-input" rows="1" placeholder="Message Bagley…" aria-label="Message Bagley" enterkeyhint="send"></textarea>
+          </div>
+          <div class="composer-under">
+            <div class="composer-hint">
+              <span class="keys"><kbd>Enter</kbd> send · <kbd>Shift</kbd><kbd>Enter</kbd> new line · <kbd>Esc</kbd> stop · <kbd>?</kbd> keys</span>
+              <span class="privacy" id="privacy"></span>
+            </div>
+            <button type="submit" class="send-btn" id="send-btn" aria-label="Send message" title="Send (Enter)" disabled>Send</button>
           </div>
         </form>
-        <div class="composer-hint">
-          <span class="keys"><kbd>Enter</kbd> send · <kbd>Shift</kbd> <kbd>Enter</kbd> new line · <kbd>Esc</kbd> stop · <kbd>?</kbd> shortcuts</span>
-          <span class="privacy" id="privacy"></span>
-        </div>
       </footer>
     </main>
 
@@ -105,6 +171,7 @@
         <div class="presence-stage">
           <canvas data-avatar="stage" aria-hidden="true"></canvas>
           <div class="presence-name">Bagley</div>
+          <div class="presence-node" id="presence-node"></div>
           <div class="presence-state" id="presence-state" data-state="idle" role="status">Idle</div>
         </div>
         <div class="stats" id="stats"></div>
@@ -116,6 +183,7 @@
   <dialog class="dialog dialog-lg" id="settings-dialog" aria-labelledby="settings-title"></dialog>
   <dialog class="dialog" id="shortcuts-dialog" aria-labelledby="shortcuts-title"></dialog>
   <dialog class="dialog" id="confirm-dialog"></dialog>
+  <dialog class="dialog" id="tool-dialog"></dialog>
   <div class="toasts" id="toasts"></div>
   <div class="sr-only" id="announcer" aria-live="polite"></div>
 </body>

@@ -68,6 +68,7 @@ export class Sidebar {
       return;
     }
     this.deferred = false;
+    $("#conv-count").textContent = state.conversations.length ? `// ${String(state.conversations.length).padStart(2, "0")}` : "";
     if (!state.conversations.length) {
       root.replaceChildren(
         el("div", { class: "conv-empty" }, state.query ? `No chats match “${state.query}”.` : "Your chats will appear here."),
@@ -99,8 +100,10 @@ export class Sidebar {
     }, conv.title);
     const unread = conv.unread && !active;
     if (unread) link.append(el("span", { class: "sr-only", text: ", unread" }));
+    const mode = conv.mode && conv.mode !== "default" ? state.prefs?.modes?.find((m) => m.id === conv.mode) : null;
     const node = el("div", { class: `conv-item${active ? " active" : ""}${unread ? " unread" : ""}`, dataset: { id: conv.id } },
       link,
+      mode ? el("span", { class: "mode-tag", title: `${mode.label} mode`, text: mode.code }) : null,
       running ? el("span", { class: "spinner running", title: "Working…" }) : null,
       el("div", { class: "conv-actions" },
         el("button", { class: "icon-btn icon-btn-sm", type: "button", "aria-label": `Rename ${conv.title}`, title: "Rename", onclick: () => this.rename(conv, node) }, icon("pencil", "icon-sm")),

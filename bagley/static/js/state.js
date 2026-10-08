@@ -20,6 +20,11 @@ export const state = {
   info: null,
   lastStats: null,
   connected: false,
+  approvals: [],
+  activity: null, // What any run is doing (desktop overlay, phone, automations).
+  activeMode: "default", // Mode of the open chat.
+  nextMode: null, // Mode the next new chat starts in.
+  runMachine: "", // Machine answering the current run.
   ui: {
     presence: storage.get("presence", true),
     speak: storage.get("speak", false),
@@ -40,16 +45,16 @@ export function setUi(key, value) {
 
 export const STATUS_TEXT = {
   idle: "Ready",
-  listening: "Listening…",
-  thinking: "Thinking…",
-  reasoning: "Reasoning…",
-  writing: "Writing…",
-  tool: "Working…",
-  approval: "Needs your approval",
+  listening: "Input",
+  thinking: "Thinking",
+  reasoning: "Reasoning",
+  writing: "Transmitting",
+  tool: "Executing",
+  approval: "Awaiting approval",
   speaking: "Speaking",
   happy: "Done",
-  error: "Something went wrong",
-  offline: "Offline",
+  error: "Error",
+  offline: "No signal",
 };
 
 export function toolInfo(name) {
