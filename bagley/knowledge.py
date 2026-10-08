@@ -174,7 +174,7 @@ class KnowledgeBase:
     def folders(self) -> list[Path]:
         prefs, _ = self.rt.preferences()
         out = [Path(self.rt.config.workspace or ".").resolve()]
-        for raw in prefs.knowledge_folders:
+        for raw in [*prefs.knowledge_folders, *prefs.vaults]:  # Obsidian vaults too.
             path = Path(raw).expanduser().resolve()
             if path not in out:
                 out.append(path)
