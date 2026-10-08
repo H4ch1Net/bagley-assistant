@@ -245,6 +245,7 @@ export class Chat {
     on("status", this.onStatus);
     on("reasoning.delta", this.onReasoning);
     on("text.delta", this.onText);
+    on("text.retract", this.onRetract);
     on("message", this.onMessage);
     on("tool.start", this.onToolStart);
     on("approval.request", this.onApproval);
@@ -552,6 +553,16 @@ export class Chat {
         this.follow();
       });
     }
+  }
+
+  /** The text streamed so far in this step was the model thinking; its reasoning follows. */
+  onRetract(ev) {
+    if (!this.live) return;
+    if (this.live.segment?.type === "text") {
+      this.live.segment.el.remove();
+      this.live.segment = null;
+    }
+    this.live.text = this.live.text.slice(0, Math.max(0, this.live.text.length - (ev.chars || 0)));
   }
 
   onMessage(ev) {

@@ -248,6 +248,9 @@ Singleton {
         case "text.delta":
             root.reply += event.text || "";
             break;
+        case "text.retract":
+            root.reply = root.reply.slice(0, Math.max(0, root.reply.length - (event.chars || 0)));
+            break;
         case "message":
             if (root.reply && !root.reply.endsWith("\n"))
                 root.reply += "\n\n";

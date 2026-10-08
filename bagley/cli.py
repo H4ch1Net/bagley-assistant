@@ -243,6 +243,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
                     print()
                     state["reasoning"] = False
                 print(event["text"], end="", flush=True)
+            elif kind == "text.retract":
+                print(S.dim("\n  ↑ that was Bagley thinking"))
             elif kind == "tool.start":
                 call = event["call"]
                 print(
@@ -360,6 +362,11 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 sys.stdout.write(event["text"])
                 sys.stdout.flush()
                 ended_line = event["text"].endswith("\n")
+            elif kind == "text.retract":
+                if not ended_line:
+                    sys.stdout.write("\n")
+                    ended_line = True
+                note("↑ that was Bagley thinking")
             elif kind == "tool.start":
                 call = event["call"]
                 note(f"⚙ {call['name']} {json.dumps(call['arguments'], ensure_ascii=False)[:100]}")

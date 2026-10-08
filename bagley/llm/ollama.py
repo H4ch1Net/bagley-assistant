@@ -108,7 +108,7 @@ class OllamaProvider(Provider):
         options: dict[str, Any] = {"temperature": temperature}
         if context_tokens:
             options["num_ctx"] = context_tokens
-        if max_tokens:
+        if max_tokens and not think:  # With thinking on, a reply-sized cap leaves no reply.
             options["num_predict"] = max_tokens
         payload: dict[str, Any] = {
             "model": model,

@@ -173,13 +173,15 @@ def ask(body: dict[str, Any], *, client: Client | None = None) -> Iterator[dict[
 
 def reply_text(events: Iterator[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """Collect a turn: the final answer text and the error events."""
-    text: list[str] = []
+    text = ""
     errors: list[dict[str, Any]] = []
     for event in events:
         if event["type"] == "text.delta":
-            text.append(event["text"])
-        elif event["type"] == "message" and text and not text[-1].endswith("\n"):
-            text.append("\n\n")
+            text += event["text"]
+        elif event["type"] == "text.retract":  # That text was the model thinking.
+            text = text[: len(text) - int(event.get("chars") or 0)]
+        elif event["type"] == "message" and text and not text.endswith("\n"):
+            text += "\n\n"
         elif event["type"] == "error":
             errors.append(event)
-    return "".join(text).strip(), errors
+    return text.strip(), errors

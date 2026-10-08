@@ -23,8 +23,8 @@ GROUPS: dict[str, tuple[str, str]] = {
         r"\b(remind|schedul|every|daily|weekly|tomorrow|later|tonight|morning|evening|watch|monitor|track|notif|alert|automat|cancel|briefing|recurring)|\bat \d|\bin \d+ ?(min|hour|day)",
     ),
     "system": (
-        "this computer: CPU, memory, disk, battery and processes; open pages or files; notifications",
-        r"\b(cpu|ram|memory usage|slow|battery|disk|storage|process|laptop|computer|machine|system|open|launch|notif|uptime|fan|hot)",
+        "this computer: specs, CPU, memory, disk, battery and processes; open pages or files; notifications",
+        r"\b(cpu|gpu|ram|memory usage|slow|battery|disk|storage|process|laptop|computer|machine|system|open|launch|notif|uptime|fan|hot|spec|hardware|graphics|processor|kernel|distro|neofetch|fastfetch)",
     ),
     "code": (
         "run Python code and shell commands, e.g. to analyse data or make charts",

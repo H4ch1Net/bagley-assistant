@@ -661,6 +661,8 @@ async def _step(
             first = time.monotonic()
         if chunk.text:
             parsed = parser.feed(chunk.text)
+            if parsed.retract:
+                step.text = ""
             step.text += parsed.text
             step.calls += parsed.tool_calls
         step.calls += chunk.tool_calls

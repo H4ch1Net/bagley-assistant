@@ -28,8 +28,9 @@ def _gb(n: float) -> float:
 async def system_status(
     top: Annotated[int, "How many of the busiest processes to list (0-15)"] = 5,
 ) -> dict[str, Any]:
-    """Live status of the user's computer: CPU, memory, disk, battery, uptime and the processes
-    using the most CPU and memory. Use it for questions like "why is my laptop slow?"."""
+    """Live load on the user's computer right now: CPU and memory in use, free disk, battery,
+    uptime and the busiest processes. Use it for "why is my laptop slow?". For what hardware
+    the computer has, use system_specs."""
     procs = list(psutil.process_iter(["pid", "name", "memory_info"]))
     for p in procs:  # First sample; cpu_percent needs two readings.
         with contextlib.suppress(psutil.Error, OSError):
@@ -76,6 +77,17 @@ async def system_status(
     if battery is not None:
         status["battery"] = {"percent": round(battery.percent), "plugged_in": battery.power_plugged}
     return status
+
+
+@tool(category="system", summary="Read this computer's specs")
+async def system_specs() -> dict[str, Any]:
+    """What the user's computer is: machine model, CPU, GPU, RAM, storage, OS and kernel,
+    displays and battery health. Use it for "what are my specs?", "what GPU do I have?",
+    "can I run this?". For what is using the CPU or memory right now, use system_status.
+    `summary` is a ready spec sheet: show it in a code block and add a line of your own."""
+    from bagley import specs
+
+    return await asyncio.to_thread(specs.collect)
 
 
 def _open_path(path: Path) -> None:

@@ -9,7 +9,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -65,6 +65,20 @@ class _Step:
     first_token: float | None = None
     started: float = field(default_factory=time.monotonic)
     native: dict[str, Any] | None = None
+
+
+def reply_text(events: Iterable[dict[str, Any]]) -> str:
+    """The reply a run streamed: its text deltas, one paragraph per step, minus retractions."""
+    text = ""
+    for event in events:
+        kind = event["type"]
+        if kind == "text.delta":
+            text += event["text"]
+        elif kind == "text.retract":
+            text = text[: len(text) - int(event.get("chars") or 0)]
+        elif kind == "message" and text and not text.endswith("\n\n"):
+            text += "\n\n"
+    return text.strip()
 
 
 def public_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -445,7 +459,7 @@ class Agent:
                 mode = "prompt"
             else:
                 mode = "native"
-        think = prefs.think if caps.thinking else None
+        think = self.rt.think_param(route.model, caps, prefs.think)
         await emit({"type": "model", "tool_mode": mode, **route.describe()})
         return mode, think
 
@@ -532,11 +546,27 @@ class Agent:
     ) -> None:
         parser = StreamParser(parse_tools=mode != "off", known_tools={t.name for t in tools})
         state = ""
+        # Some thinking models reason anyway when asked not to, and only a lone </think> tells.
+        # Until a model has shown which kind it is, keep its reply back to the end of the step.
+        hold = think is False and model not in self.rt.think_checked
+        held = ""
+        reasoned = False  # A lone </think> showed up although reasoning was off.
 
         async def handle(
-            text: str = "", reasoning: str = "", calls: list[ToolCall] | None = None
+            text: str = "",
+            reasoning: str = "",
+            calls: list[ToolCall] | None = None,
+            retract: bool = False,
         ) -> None:
-            nonlocal state
+            nonlocal state, hold, held, reasoned
+            if retract:
+                hold, reasoned = False, True  # Past the reasoning: the rest is the reply.
+                if step.text:  # What came as the reply was the model thinking.
+                    reasoning = step.text + reasoning
+                    if not held:
+                        await emit({"type": "text.retract", "chars": len(step.text)})
+                    step.text = held = ""
+                    state = ""
             if reasoning:
                 step.reasoning += reasoning
                 if state != "reasoning":
@@ -546,7 +576,10 @@ class Agent:
             if text:
                 if not step.text:
                     text = text.lstrip()
-                if text:
+                if text and hold:
+                    step.text += text
+                    held += text
+                elif text:
                     step.text += text
                     if state != "writing":
                         state = "writing"
@@ -569,7 +602,7 @@ class Agent:
                 await handle(reasoning=chunk.reasoning)
             if chunk.text:
                 parsed = parser.feed(chunk.text)
-                await handle(parsed.text, parsed.reasoning, parsed.tool_calls)
+                await handle(parsed.text, parsed.reasoning, parsed.tool_calls, parsed.retract)
             if chunk.tool_calls:
                 await handle(calls=chunk.tool_calls)
             if chunk.usage:
@@ -578,6 +611,11 @@ class Agent:
                 step.native = chunk.native
         tail = parser.finish()
         await handle(tail.text, tail.reasoning, tail.tool_calls)
+        if think is False and (step.text or reasoned):
+            self.rt.learn_think(model, always=reasoned)
+        if held:
+            await emit({"type": "status", "state": "writing"})
+            await emit({"type": "text.delta", "text": held})
 
     @staticmethod
     def _step_stats(step: _Step) -> dict[str, Any]:
@@ -725,17 +763,17 @@ class Agent:
                     provider, model = light.provider, light.model
                 except LLMError:
                     pass
+            if model in self.rt.always_think:
+                return  # A reasoning pass for a title isn't worth it; the first words do.
             caps = await provider.capabilities(model)
             raw = await provider.complete(
                 [{"role": "user", "content": TITLE_PROMPT.format(message=text[:600])}],
                 model=model,
                 temperature=0.3,
                 max_tokens=40,
-                think=False if caps.thinking else None,
+                think=self.rt.think_param(model, caps),
             )
-            parsed = StreamParser(parse_tools=False)
-            body = parsed.feed(raw).text + parsed.finish().text
-            title = clean_title(body)
+            title = clean_title(raw)
             if title and self.rt.store.rename_conversation(cid, title):
                 await emit({"type": "title", "conversation_id": cid, "title": title})
         except Exception as exc:  # Titles are cosmetic; never surface failures.

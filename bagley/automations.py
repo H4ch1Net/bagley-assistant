@@ -404,7 +404,7 @@ class Scheduler:
         self, item: dict[str, Any], prompt: str, *, tools: bool = True
     ) -> tuple[str, str]:
         """Run the agent unattended in the automation's chat. Returns (status, final text)."""
-        from bagley.agent import Agent, RunRequest  # Imported late: agent imports runtime.
+        from bagley.agent import Agent, RunRequest, reply_text  # Late: agent imports runtime.
         from bagley.policy import UnattendedPolicy
 
         cid = self._conversation(item)
@@ -424,7 +424,7 @@ class Scheduler:
         )
         await Agent(self.rt).run(request, emit, deny)
         errors = [e for e in events if e["type"] == "error"]
-        text = "".join(e["text"] for e in events if e["type"] == "text.delta").strip()
+        text = reply_text(events)
         if errors and not text:
             await self.rt.notify(
                 item["name"], errors[0]["message"], conversation_id=cid, level="error"

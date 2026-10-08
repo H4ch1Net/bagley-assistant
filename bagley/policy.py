@@ -22,6 +22,7 @@ READS_PRIVATE = {
     "list_files",
     "search_files",
     "system_status",
+    "system_specs",
     "list_automations",
 }
 CHANGES_STATE = {"remember", "forget", "set_reminder", "cancel_automation", "make_directory"}

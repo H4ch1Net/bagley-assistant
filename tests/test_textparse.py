@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from bagley.llm.textparse import StreamParser, parse_tool_call
+from bagley.llm.textparse import StreamParser, parse_tool_call, visible_text
 
 
 def feed_all(parser: StreamParser, chunks: list[str]):
     text, reasoning, calls = "", "", []
     for part in [*(parser.feed(c) for c in chunks), parser.finish()]:
+        if part.retract:
+            text, reasoning = "", reasoning + text
         text += part.text
         reasoning += part.reasoning
         calls += part.tool_calls
@@ -18,6 +20,38 @@ def test_think_tags_split_across_chunks():
     )
     assert reasoning == "pondering"
     assert text == "Hello world"
+
+
+def test_lone_closing_tag_turns_earlier_text_into_reasoning():
+    # Qwen3 thinking models: the template opens <think>, so only the closing tag is printed.
+    parser = StreamParser()
+    first = parser.feed("Okay, the user wants their specs. ")
+    assert first.text == "Okay, the user wants their specs. "
+    second = parser.feed("I should call system_info.</th")
+    assert second.text == "I should call system_info." and not second.retract
+    third = parser.feed("ink>\n\nHere you go.")
+    assert third.retract
+    assert third.reasoning == ""
+    assert third.text == "Here you go."
+
+
+def test_lone_closing_tag_in_one_chunk():
+    text, reasoning, _ = feed_all(StreamParser(), ["Hmm, let me think.</think>\n\nAnswer."])
+    assert reasoning == "Hmm, let me think."
+    assert text == "Answer."
+
+
+def test_second_lone_closing_tag_retracts_again():
+    text, reasoning, _ = feed_all(StreamParser(), ["a ", "</think>", "b ", "</think>", "c"])
+    assert text == "c"
+    assert reasoning == "a b "
+
+
+def test_visible_text_drops_reasoning():
+    assert visible_text("<think>x</think>\nTitle") == "Title"
+    assert visible_text("pondering...</think>\n\nTitle") == "Title"
+    assert visible_text("Plain answer") == "Plain answer"
+    assert visible_text("<think>never closed") == ""
 
 
 def test_tool_call_split_across_chunks():

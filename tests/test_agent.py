@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from bagley.agent import Agent, RunRequest, estimate_tokens, fit_history
+from bagley.agent import Agent, RunRequest, estimate_tokens, fit_history, reply_text
 from tests.mock_llm import Reply
 
 pytestmark = pytest.mark.anyio
@@ -154,6 +154,7 @@ async def test_edit_replaces_last_exchange(make_runtime, recorder, mock):
 async def test_cancel_keeps_partial_reply(make_runtime, recorder, mock):
     mock.script = [Reply(text="word " * 200)]
     rt = make_runtime()
+    rt.learn_think("qwen3:8b", always=False)  # Known to honor "no reasoning": streams at once.
 
     async def emit(event):
         await recorder.emit(event)
@@ -185,6 +186,60 @@ async def test_reasoning_streams_separately(make_runtime, recorder, mock):
     assert "".join(e["text"] for e in recorder.of("reasoning.delta")) == "Let me think."
     assert recorder.text() == "Answer."
     assert mock.requests[0]["think"] is True
+
+
+async def test_model_that_reasons_anyway_is_caught_and_remembered(make_runtime, recorder, mock):
+    # Qwen3 thinking models reason with think: false and print only the closing tag.
+    rt = make_runtime()
+    mock.script = [
+        Reply(text="Okay, the user wants their specs.</think>\n\nHere they are."),
+        Reply(reasoning="Short.", text="Second answer."),
+    ]
+    await run(rt, recorder, "specs?")
+    assert mock.requests[0]["think"] is False
+    assert recorder.of("text.retract") == []  # Held back until the model showed its kind.
+    assert recorder.text() == "Here they are."
+    assert "".join(e["text"] for e in recorder.of("reasoning.delta")) == (
+        "Okay, the user wants their specs."
+    )
+    cid = recorder.of("run.end")[0]["conversation_id"]
+    reply = rt.store.list_messages(cid)[-1]
+    assert reply["content"] == "Here they are."
+    assert reply["reasoning"] == "Okay, the user wants their specs."
+    assert "qwen3:8b" in rt.always_think
+
+    await run(rt, recorder, "again", conversation_id=cid)
+    assert mock.requests[-1]["think"] is True  # Let the server split the reasoning off.
+    # Remembered across restarts.
+    assert "qwen3:8b" in make_runtime().always_think
+
+
+async def test_model_that_honors_think_off_streams_after_its_first_reply(
+    make_runtime, recorder, mock
+):
+    rt = make_runtime()
+    mock.script = [Reply(text="First answer in a few words."), Reply(text="Second answer too.")]
+    await run(rt, recorder, "one")
+    assert len(recorder.of("text.delta")) == 1  # The first reply comes in one piece.
+    assert rt.think_checked == {"qwen3:8b"} and not rt.always_think
+    recorder.events.clear()
+    cid = rt.store.list_conversations()[0]["id"]
+    await run(rt, recorder, "two", conversation_id=cid)
+    assert len(recorder.of("text.delta")) > 1
+    assert mock.requests[-1]["think"] is False
+
+
+async def test_lone_think_tag_after_streaming_retracts_the_text(make_runtime, recorder, mock):
+    rt = make_runtime()
+    rt.learn_think("qwen3:8b", always=False)
+    mock.script = [Reply(text="Let me see what they want.</think>\n\nThe answer.")]
+    await run(rt, recorder, "q")
+    retract = recorder.of("text.retract")
+    before = recorder.events[: recorder.events.index(retract[0])]
+    sent = "".join(e["text"] for e in before if e["type"] == "text.delta")
+    assert len(retract) == 1 and retract[0]["chars"] == len(sent) > 0
+    assert reply_text(recorder.events) == "The answer."
+    assert "qwen3:8b" in rt.always_think
 
 
 async def test_smart_title(make_runtime, recorder):
