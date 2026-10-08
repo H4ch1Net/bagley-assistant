@@ -10,10 +10,12 @@ import * as automations from "./panels/automations.js";
 import * as devices from "./panels/devices.js";
 import * as general from "./panels/general.js";
 import * as knowledge from "./panels/knowledge.js";
+import * as life from "./panels/life.js";
 import * as memory from "./panels/memory.js";
 import * as model from "./panels/model.js";
 import * as notifications from "./panels/notifications.js";
 import * as routines from "./panels/routines.js";
+import * as study from "./panels/study.js";
 import * as tools from "./panels/tools.js";
 import * as voicePanel from "./panels/voice.js";
 
@@ -25,6 +27,8 @@ const TABS = [
   { id: "model", label: "Model & machines", icon: "cpu", panel: model },
   { id: "memory", label: "Memory", icon: "bookmark", panel: memory },
   { id: "knowledge", label: "Knowledge", icon: "library", panel: knowledge },
+  { id: "life", label: "Your life", icon: "history", panel: life },
+  { id: "study", label: "Study", icon: "graduation-cap", panel: study },
   { id: "voice", label: "Voice", icon: "volume-2", panel: voicePanel },
   { group: "Automation" },
   { id: "automations", label: "Automations", icon: "calendar-clock", panel: automations },

@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { state } from "../state.js";
 import { toast } from "../ui.js";
 import { debounce, el, icon } from "../util.js";
-import { field, header, keepFocus, pullModel, savePrefs, section, stringList, value } from "../settings-kit.js";
+import { field, header, keepFocus, pullModel, savePrefs, section, value } from "../settings-kit.js";
 
 let box = null;
 
@@ -44,12 +44,6 @@ export function render(panel, ctx) {
       : [el("div", { class: "list-empty", text: "No matches." })]));
   }, 250));
 
-  const saveList = (key) => async (items) => {
-    const ok = await savePrefs({ [key]: items });
-    if (ok && key === "vaults") await api.post("/api/knowledge/reindex").catch(() => {});
-    return ok;
-  };
-
   header(panel, "Knowledge", "Bagley searches these folders when you ask about your notes and documents. Files are indexed on this computer and never uploaded. Text, Markdown, code, HTML and CSV are supported (PDF too with the pdf extra).");
   panel.append(
     box,
@@ -58,15 +52,6 @@ export function render(panel, ctx) {
       el("div", { class: "help", style: "margin-top:6px", text: "A full path on this computer. Hidden folders and node_modules are skipped." }),
     ),
     section("Search", query, results),
-    section("Your life",
-      el("p", { class: "help", style: "margin:0 0 10px", text: "Obsidian vaults are indexed like the folders above and read by date, so you can ask \"what was I working on Tuesday?\" or get a weekly recap. Code folders are scanned for git repositories; only your commit history is read, not the code." }),
-      el("div", { class: "field-row" },
-        el("div", { class: "field" }, el("span", { class: "field-label", text: "Obsidian vaults" }),
-          stringList({ items: [...(value("vaults") || [])], placeholder: "~/Documents/Obsidian/Main", onChange: saveList("vaults") })),
-        el("div", { class: "field" }, el("span", { class: "field-label", text: "Code folders" }),
-          stringList({ items: [...(value("code_folders") || [])], placeholder: "~/dev", onChange: saveList("code_folders") })),
-      ),
-    ),
   );
   renderStatus(ctx);
 }
@@ -135,7 +120,7 @@ export function renderStatus(ctx) {
               state.knowledge = await api.del(`/api/knowledge/folders?path=${encodeURIComponent(f.path)}`).catch((err) => (toast(err.message, { type: "error" }), state.knowledge));
               renderStatus(ctx);
             } }, icon("x", "icon-sm"))
-          : el("span", { class: "subtle", style: "font-size:.74rem", text: f.vault ? "vault" : "always included" }),
+          : el("span", { class: "subtle", style: "font-size:.74rem", text: f.vault ? "vault · see Your life" : "always included" }),
       ))),
     ),
     el("div", { class: "section" },
