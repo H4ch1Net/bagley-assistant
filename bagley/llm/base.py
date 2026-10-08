@@ -149,8 +149,11 @@ class Provider(ABC):
     ) -> AsyncIterator[ChatChunk]: ...
 
     async def complete(self, messages: list[Message], *, model: str, **kwargs: Any) -> str:
+        """The whole reply as text, without the model's reasoning."""
+        from bagley.llm.textparse import visible_text
+
         parts = [chunk.text async for chunk in self.chat(messages, model=model, **kwargs)]
-        return "".join(parts)
+        return visible_text("".join(parts))
 
     def pull(self, model: str) -> AsyncIterator[dict[str, Any]]:
         raise LLMError("This server cannot download models.")

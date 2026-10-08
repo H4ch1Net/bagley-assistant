@@ -6,6 +6,7 @@ import { Attachments } from "./attachments.js";
 import { mountAvatars } from "./avatar.js";
 import { Bar, currentMode } from "./bar.js";
 import { Chat } from "./chat.js";
+import "./pickers.js";
 import { loadRoutines, saveFromChat } from "./routines.js";
 import { pullModel, RECOMMENDED_MODELS, savePrefs, Settings } from "./settings.js";
 import { Sidebar } from "./sidebar.js";

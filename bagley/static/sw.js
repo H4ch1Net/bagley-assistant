@@ -52,6 +52,7 @@ const SHELL = [
   "/static/js/panels/voice.js",
   "/static/js/panels/watchdog.js",
   "/static/js/panels/work.js",
+  "/static/js/pickers.js",
   "/static/js/routines.js",
   "/static/js/settings-kit.js",
   "/static/js/settings.js",
@@ -151,7 +152,8 @@ function passThrough(request, url) {
 async function fromNetwork(event) {
   const cache = await caches.open(CACHE);
   try {
-    const response = await fetch(event.request);
+    // Revalidate even when the browser's HTTP cache thinks its copy is fresh.
+    const response = await fetch(event.request, { cache: "no-cache" });
     if (response.ok && response.type === "basic") {
       event.waitUntil(cache.put(event.request, response.clone()));
     }

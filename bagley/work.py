@@ -1285,19 +1285,15 @@ def render_summary(fields: dict[str, Any], language: str) -> str:
     return redact("\n".join(lines).strip())
 
 
-async def _complete(route: Any, system: str, user: str) -> str:
-    from bagley.llm.textparse import StreamParser
-
+async def _complete(rt: Runtime, route: Any, system: str, user: str) -> str:
     caps = await route.provider.capabilities(route.model)
-    raw = await route.provider.complete(
+    return await route.provider.complete(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         model=route.model,
         temperature=0.2,
         max_tokens=900,
-        think=False if caps.thinking else None,
+        think=rt.think_param(route.model, caps),
     )
-    parser = StreamParser(parse_tools=False)
-    return (parser.feed(raw).text + parser.finish().text).strip()
 
 
 async def ticket_summary(
@@ -1323,10 +1319,10 @@ async def ticket_summary(
     for language in langs:
         if first is None:  # Also when the first answer was unusable: write from the notes.
             system = SUMMARY_PROMPT.format(company=company, language=language)
-            raw = await _complete(route, system, f"{header}<notes>\n{body}\n</notes>")
+            raw = await _complete(rt, route, system, f"{header}<notes>\n{body}\n</notes>")
         else:
             system = TRANSLATE_PROMPT.format(company=company, language=language)
-            raw = await _complete(route, system, format_fields(first))
+            raw = await _complete(rt, route, system, format_fields(first))
         fields = parse_summary(raw)
         if fields is None:
             markdown = redact(raw)

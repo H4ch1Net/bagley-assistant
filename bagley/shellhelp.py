@@ -748,7 +748,7 @@ async def _complete(
                     model=route.model,
                     temperature=TEMPERATURE,
                     max_tokens=max_tokens,
-                    think=False if caps.thinking else None,
+                    think=rt.think_param(route.model, caps),
                 )
             except UnreachableError as exc:
                 rt.router.mark_down(route.machine)

@@ -91,7 +91,7 @@ def recap_prompt(item: dict[str, Any], data: dict[str, Any]) -> str:
 
 async def run_recap(scheduler: Scheduler, item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     """Collect the last 7 days, post them as a draft and have the model write the recap."""
-    from bagley.agent import Agent, RunRequest  # Imported late: agent imports runtime.
+    from bagley.agent import Agent, RunRequest, reply_text  # Late: agent imports runtime.
     from bagley.policy import UnattendedPolicy
 
     rt = scheduler.rt
@@ -122,7 +122,7 @@ async def run_recap(scheduler: Scheduler, item: dict[str, Any]) -> tuple[str, st
         source="automation",
     )
     await Agent(rt).run(request, emit, deny)
-    text = "".join(e["text"] for e in events if e["type"] == "text.delta").strip()
+    text = reply_text(events)
     errors = [e["message"] for e in events if e["type"] == "error"]
     state = {
         "period": label,

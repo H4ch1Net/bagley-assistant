@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import struct
@@ -8,7 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from bagley import __version__
+from bagley.assets import build_id, fingerprints
 from bagley.server import create_app
 
 STATIC = Path(__file__).resolve().parents[1] / "bagley" / "static"
@@ -74,7 +76,7 @@ def test_service_worker_is_served_from_the_root(client):
     assert resp.headers["content-type"].startswith("text/javascript")
     assert resp.headers["service-worker-allowed"] == "/"
     assert resp.headers["cache-control"] == "no-cache"
-    assert f'const VERSION = "{__version__}"' in resp.text and "{{version}}" not in resp.text
+    assert f'const VERSION = "{build_id()}"' in resp.text and "{{version}}" not in resp.text
     for needle in ("skipWaiting", "clients.claim", "notificationclick", '"/api/"', "caches.delete"):
         assert needle in resp.text
     assert client.head("/sw.js").status_code == 200
@@ -97,3 +99,23 @@ def test_service_worker_precaches_files_that_exist():
             assert on_disk(url).is_file(), f"sw.js precaches {url}, which doesn't exist"
     modules = {f"/static/js/{p.name}" for p in (STATIC / "js").glob("*.js")}
     assert modules <= set(urls), "add new modules to SHELL in sw.js"
+
+
+def test_page_pins_every_asset_to_its_content(client):
+    """An upgrade must never mix a cached old stylesheet or module into the new page."""
+    resp = client.get("/")
+    html = resp.text
+    assert "{{" not in html
+    prints = fingerprints()
+    assert f'href="/static/css/app.css?v={prints["/static/css/app.css"]}"' in html
+    assert f'src="/static/js/main.js?v={prints["/static/js/main.js"]}"' in html
+    imports = json.loads(re.search(r'<script type="importmap">(.*?)</script>', html).group(1))[
+        "imports"
+    ]
+    modules = sorted(p.relative_to(STATIC).as_posix() for p in (STATIC / "js").rglob("*.js"))
+    for module in modules:
+        url = f"/static/{module}"
+        assert imports[url] == f"{url}?v={prints[url]}"
+    body = re.search(r'<script type="importmap">(.*?)</script>', html, re.S).group(1)
+    digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
+    assert f"'sha256-{digest}'" in resp.headers["content-security-policy"]

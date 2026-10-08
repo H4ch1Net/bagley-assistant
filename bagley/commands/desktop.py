@@ -148,6 +148,9 @@ def relay(events: Iterator[dict[str, Any]], *, as_json: bool, out: TextIO, err: 
                 outcome.machine = event.get("machine") or outcome.machine
             elif kind == "text.delta":
                 parts.append(event.get("text") or "")
+            elif kind == "text.retract":
+                joined = "".join(parts)
+                parts = [joined[: len(joined) - int(event.get("chars") or 0)]]
             elif kind == "message" and parts and not parts[-1].endswith("\n"):
                 parts.append("\n\n")
             elif kind == "error":
@@ -167,6 +170,8 @@ def relay(events: Iterator[dict[str, Any]], *, as_json: bool, out: TextIO, err: 
                 ended_line = text.endswith("\n") if text else ended_line
             elif kind == "message":
                 gap = True
+            elif kind == "text.retract":
+                say(Ink.GRAY, "» ABOVE: REASONING")
             elif kind == "tool.start":
                 say(Ink.GRAY, f"» EXEC {call.get('name', '?')}")
             elif kind == "approval.request":

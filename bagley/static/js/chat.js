@@ -63,14 +63,24 @@ function proseBlock(markdown, streaming = false) {
   return node;
 }
 
+/** The model's reasoning, folded to one line like a log entry; it opens on click. */
 function reasoningBlock(text, { live = false, seconds } = {}) {
-  const label = el("span", { class: "label", text: live ? "Thinking…" : seconds ? `Thought for ${seconds}s` : "Reasoning" });
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const label = el("span", { class: "label", text: live ? "Thinking" : seconds ? `Thought for ${seconds}s` : "Reasoning" });
+  const meta = el("span", { class: "meta", text: live ? "" : words ? `${String(words).padStart(3, "0")} words` : "" });
+  const ticker = el("span", { class: "ticker", "aria-hidden": "true" });
   const body = el("div", { class: "reasoning-text", text });
   const details = el("details", { class: `reasoning${live ? " live" : ""}` },
-    el("summary", {}, icon("chevron-right", "icon-xs chev"), icon("brain", "icon-sm"), label),
+    el("summary", {}, icon("chevron-right", "icon-xs chev"), icon("brain", "icon-sm"), label, meta, ticker),
     body,
   );
-  return { details, label, body };
+  return { details, label, meta, ticker, body };
+}
+
+/** The last line of reasoning so far, for the folded block's ticker. */
+function lastLine(text) {
+  const lines = text.trim().split(/\n+/);
+  return (lines[lines.length - 1] || "").replace(/\s+/g, " ").slice(-160);
 }
 
 /** A collapsible card for one tool call. Returns helpers to update it as the call progresses. */
@@ -245,6 +255,7 @@ export class Chat {
     on("status", this.onStatus);
     on("reasoning.delta", this.onReasoning);
     on("text.delta", this.onText);
+    on("text.retract", this.onRetract);
     on("message", this.onMessage);
     on("tool.start", this.onToolStart);
     on("approval.request", this.onApproval);
@@ -505,8 +516,12 @@ export class Chat {
       setMarkdown(seg.el, seg.raw);
     } else if (seg.type === "reasoning") {
       const secs = Math.max(1, Math.round((performance.now() - seg.started) / 1000));
+      const words = seg.raw.trim() ? seg.raw.trim().split(/\s+/).length : 0;
+      clearInterval(seg.timer);
       seg.block.details.classList.remove("live");
       seg.block.label.textContent = `Thought for ${secs}s`;
+      seg.block.meta.textContent = words ? `${String(words).padStart(3, "0")} words` : "";
+      seg.block.ticker.textContent = "";
       if (!seg.userToggled) seg.block.details.open = false;
     }
     this.live.segment = null;
@@ -518,15 +533,25 @@ export class Chat {
     if (seg?.type !== "reasoning") {
       this.closeSegment();
       const block = reasoningBlock("", { live: true });
-      block.details.open = true;
       seg = { type: "reasoning", block, raw: "", started: performance.now(), userToggled: false };
       block.details.querySelector("summary").addEventListener("click", () => (seg.userToggled = true));
+      block.details.addEventListener("toggle", () => {
+        if (!block.details.open) return;
+        block.body.textContent = seg.raw;
+        block.body.scrollTop = block.body.scrollHeight;
+      });
+      const tick = () => (block.meta.textContent = `${String(Math.floor((performance.now() - seg.started) / 1000)).padStart(2, "0")}s`);
+      tick();
+      seg.timer = setInterval(tick, 1000);
       this.live.body.append(block.details);
       this.live.segment = seg;
     }
     seg.raw += ev.text;
-    seg.block.body.textContent = seg.raw;
-    seg.block.body.scrollTop = seg.block.body.scrollHeight;
+    seg.block.ticker.textContent = lastLine(seg.raw);
+    if (seg.block.details.open) {
+      seg.block.body.textContent = seg.raw;
+      seg.block.body.scrollTop = seg.block.body.scrollHeight;
+    }
     this.avatars.pulse(0.15);
     this.follow();
   }
@@ -552,6 +577,16 @@ export class Chat {
         this.follow();
       });
     }
+  }
+
+  /** The text streamed so far in this step was the model thinking; its reasoning follows. */
+  onRetract(ev) {
+    if (!this.live) return;
+    if (this.live.segment?.type === "text") {
+      this.live.segment.el.remove();
+      this.live.segment = null;
+    }
+    this.live.text = this.live.text.slice(0, Math.max(0, this.live.text.length - (ev.chars || 0)));
   }
 
   onMessage(ev) {

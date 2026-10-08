@@ -76,6 +76,7 @@ const TOOL_ICONS = {
   delete_file: "trash-2",
   make_directory: "folder-plus",
   system_status: "activity",
+  system_specs: "cpu",
   open_on_computer: "monitor-up",
   notify_user: "bell",
   set_reminder: "alarm-clock",

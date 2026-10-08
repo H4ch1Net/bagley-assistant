@@ -29,6 +29,13 @@ log = logging.getLogger("bagley")
 
 _PROVIDER_KEYS = {"provider", "base_url", "api_key"}
 
+THINK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS think_traits (
+    model TEXT PRIMARY KEY,
+    always INTEGER NOT NULL
+);
+"""
+
 
 class Runtime:
     def __init__(
@@ -48,6 +55,10 @@ class Runtime:
         self.http = httpx.AsyncClient(transport=tool_transport, timeout=20.0)
         self.llm_transport = llm_transport
         self.prompt_mode_models: set[str] = set()
+        # Thinking models seen answering with reasoning off, and those that reasoned anyway.
+        self.think_checked: set[str] = set()
+        self.always_think: set[str] = set()
+        self._load_think_traits()
         self.busy: set[str] = set()  # Conversations with a run in progress.
         self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
         self.scheduler = Scheduler(self)
@@ -170,6 +181,37 @@ class Runtime:
                 self._provider_key = key
                 self.prompt_mode_models.clear()
             return self._provider
+
+    # Thinking models ------------------------------------------------------------------------
+
+    def _load_think_traits(self) -> None:
+        self.store.ensure_schema(THINK_SCHEMA)
+        for row in self.store.query("SELECT model, always FROM think_traits"):
+            self.think_checked.add(row["model"])
+            if row["always"]:
+                self.always_think.add(row["model"])
+
+    def think_param(self, model: str, caps: Any, wanted: bool = False) -> bool | None:
+        """The reasoning switch to send: None for models without one. A model that reasons
+        even when told not to gets it on, so the server keeps its thinking out of the reply."""
+        if not caps.thinking:
+            return None
+        return True if model in self.always_think else wanted
+
+    def learn_think(self, model: str, *, always: bool) -> None:
+        """Record whether ``model`` honored a request not to reason."""
+        if model in self.think_checked and (model in self.always_think) == always:
+            return
+        self.think_checked.add(model)
+        if always:
+            self.always_think.add(model)
+        else:
+            self.always_think.discard(model)
+        self.store.execute(
+            "INSERT INTO think_traits (model, always) VALUES (?, ?) "
+            "ON CONFLICT(model) DO UPDATE SET always = excluded.always",
+            (model, int(always)),
+        )
 
     async def resolve_model(self, provider: Provider, prefs: Preferences) -> str:
         if prefs.model:

@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import Response
 
-from bagley import __version__
+from bagley.assets import build_id
 
 router = APIRouter()
 
@@ -23,8 +23,8 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 @router.api_route("/sw.js", methods=["GET", "HEAD"], include_in_schema=False)
 async def service_worker() -> Response:
-    # The version names the cache, so an upgrade replaces the cached app shell.
-    text = SW_FILE.read_text(encoding="utf-8").replace("{{version}}", __version__)
+    # The build id names the cache, so any change to the UI replaces the cached app shell.
+    text = SW_FILE.read_text(encoding="utf-8").replace("{{version}}", build_id())
     return Response(
         text,
         media_type="text/javascript",

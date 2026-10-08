@@ -74,6 +74,71 @@ def test_chat_with_tool_call_and_reload(page, stack):
     assert "Lisbon" in page.inner_text(".tool-card .tool-detail")
 
 
+def test_reasoning_folds_to_one_line(page, stack):
+    stack.mock.script = [
+        Reply(reasoning="Check the units first.\nThen add them up.", text="Seven.")
+    ]
+    send(page, "What is 3 + 4?")
+    wait_idle(page)
+    block = page.locator(".turn-assistant .reasoning")
+    expect(block).to_have_count(1)
+    assert block.get_attribute("open") is None  # Folded, like a log line.
+    summary = block.locator("summary")
+    expect(summary).to_contain_text("Thought for")
+    expect(summary.locator(".meta")).to_have_text("008 words")
+    assert page.inner_text(".turn-assistant .prose") == "Seven."
+    summary.click()
+    expect(block.locator(".reasoning-text")).to_have_text(
+        "Check the units first.\nThen add them up."
+    )
+
+
+def test_lone_closing_think_tag_moves_the_text_into_reasoning(page, stack):
+    # A Qwen3 thinking model: reasoning in the reply, closed by a </think> it never opened.
+    stack.mock.delay = 0.02
+    stack.mock.script = [
+        Reply(text="Okay, the user wants their specs. I should look.</think>\n\nHere they are.")
+    ]
+    send(page, "my specs?")
+    wait_idle(page)
+    assert page.inner_text(".turn-assistant .prose") == "Here they are."
+    expect(page.locator(".turn-assistant .reasoning")).to_have_count(1)
+    page.click(".turn-assistant .reasoning summary")
+    expect(page.locator(".reasoning-text")).to_contain_text("the user wants their specs")
+    page.reload()
+    page.wait_for_selector(".turn-assistant .reasoning")
+    assert page.inner_text(".turn-assistant .prose") == "Here they are."
+
+
+def test_native_controls_use_the_palette(page, stack):
+    """Checkboxes, radios and focus rings in ctOS grays, never the browser's blue."""
+    page.keyboard.press("Control+,")
+    page.click("#tab-appearance")
+    box = page.locator("#follow-avatar")
+    styles = box.evaluate(
+        "(el) => { const s = getComputedStyle(el); const b = getComputedStyle(el, '::before');"
+        " return [s.appearance, s.borderTopColor, b.backgroundColor,"
+        " getComputedStyle(document.documentElement).accentColor]; }"
+    )
+    assert styles[0] == "none"
+    for color in styles[1:]:
+        r, g, b = (int(x) for x in re.findall(r"\d+", color)[:3])
+        assert max(r, g, b) - min(r, g, b) < 8, color  # A gray.
+
+
+def test_retired_colour_presets_fall_back_to_ctos(page, stack):
+    page.evaluate(
+        """localStorage.setItem("bagley.appearance", JSON.stringify(
+            {preset: "signal", colors: {dark: {"c-accent": "#27d3ee"}, light: {}}, updated: 1}))"""
+    )
+    page.reload()
+    page.wait_for_selector(".conn .dot.ok")
+    accent = page.evaluate(
+        "getComputedStyle(document.documentElement).getPropertyValue('--c-accent').trim()"
+    )
+    assert accent in ("#d9d9d9", "#202020")  # The ctOS default for the dark or light theme.
+
+
 def test_approval_deny_then_regenerate_and_allow(page, stack):
     send(page, "Save a note about the trip")
     page.click(".approval >> text=Deny")
@@ -255,12 +320,48 @@ def test_file_change_shows_diff_and_reverts(page, stack):
     expect(page.locator(".tool-bar .badge")).to_have_text("Reverted")
 
 
+def test_selects_and_suggestions_open_a_ctos_list(page, stack):
+    """Native select lists and datalists draw in the OS colours (GTK blue on Kali)."""
+    page.keyboard.press("Control+,")
+    page.click("#tab-model")
+    tool_mode = page.locator("select.select:has(option[value='prompt'])")
+    picker = page.locator(".picker")
+    tool_mode.click()
+    expect(picker.locator(".picker-item")).to_have_count(4)
+    expect(picker.locator(".picker-item.active")).to_have_text("Automatic")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(picker).to_have_count(0)
+    assert tool_mode.input_value() == "native"
+    for _ in range(50):
+        if stack.runtime.preferences()[0].tool_mode == "native":
+            break
+        page.wait_for_timeout(50)
+    assert stack.runtime.preferences()[0].tool_mode == "native"
+
+    tool_mode.click()
+    expect(picker).to_be_visible()
+    page.keyboard.press("Escape")  # Closes the list, not the settings.
+    expect(picker).to_have_count(0)
+    expect(page.locator("#settings-dialog")).to_be_visible()
+
+    vision = page.locator("input[placeholder='Automatic (a model that can see)']")
+    vision.focus()
+    page.keyboard.press("ArrowDown")
+    first = picker.locator(".picker-item").first
+    expect(first).to_have_class(re.compile("active"))
+    name = first.inner_text()
+    page.keyboard.press("Enter")
+    assert vision.input_value() == name
+    assert vision.get_attribute("list") is None  # The browser's own dropdown never shows.
+
+
 def test_create_and_run_a_reminder(page, stack):
     page.click("#automations-btn")
     page.click(".segmented >> text=Reminder")
     page.fill("input[placeholder='e.g. Stretch']", "Stretch")
     page.fill("#settings-panel textarea", "Stand up and stretch")
-    page.fill("input[list='schedule-presets']", "in 45 minutes")
+    page.fill("#auto-when", "in 45 minutes")
     expect(page.locator(".field .help").filter(has_text="Once,")).to_be_visible()
     page.click("button:has-text('Create')")
     row = page.locator(".list-item.automation").filter(has_text="Stretch")

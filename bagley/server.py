@@ -34,6 +34,7 @@ from bagley import __version__, automations, journal
 from bagley.agent import Agent, RunRequest, public_message
 from bagley.api import routers
 from bagley.approvals import Pending, summarize
+from bagley.assets import render_page
 from bagley.config import (
     LOOPBACK_HOSTS,
     PREFERENCE_ENV,
@@ -346,7 +347,7 @@ def content_security_policy(html: str) -> str:
     script is pinned by hash; model output can never load remote images or frames."""
     hashes = " ".join(
         "'sha256-" + base64.b64encode(hashlib.sha256(body.encode()).digest()).decode() + "'"
-        for body in re.findall(r"<script>(.*?)</script>", html, re.S)
+        for body in re.findall(r"<script(?: type=\"importmap\")?>(.*?)</script>", html, re.S)
     )
     return (
         "default-src 'self'; "
@@ -384,9 +385,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
     def rt() -> Runtime:
         return app.state.runtime
 
-    index_html = (
-        (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("{{version}}", __version__)
-    )
+    index_html = render_page((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
     page_headers = {
         "Cache-Control": "no-cache",

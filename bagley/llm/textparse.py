@@ -1,6 +1,9 @@
 """Streaming parser for tags that some models emit inside plain text.
 
-* ``<think>…</think>`` is routed to reasoning instead of the visible reply.
+* ``<think>…</think>`` is routed to reasoning instead of the visible reply. Models whose chat
+  template opens the block for them (Qwen3 thinking, DeepSeek R1 distills) print only the closing
+  tag; everything before such an orphan ``</think>`` was reasoning, so the parser says so with
+  ``Parsed.retract`` and the caller moves the text it already showed.
 * ``<tool_call>{json}</tool_call>`` (Hermes/Qwen style) becomes a structured tool call. This is
   how "prompt mode" tool use works for models without native function calling, and it also
   rescues native-mode models that print tool calls as text.
@@ -64,9 +67,11 @@ class Parsed:
     text: str = ""
     reasoning: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # The text this parser returned before was reasoning too: move it in front of ``reasoning``.
+    retract: bool = False
 
     def __bool__(self) -> bool:
-        return bool(self.text or self.reasoning or self.tool_calls)
+        return bool(self.text or self.reasoning or self.tool_calls or self.retract)
 
 
 class StreamParser:
@@ -80,20 +85,30 @@ class StreamParser:
     def _open_tags(self) -> tuple[str, ...]:
         return (THINK_OPEN, TOOL_OPEN) if self.parse_tools else (THINK_OPEN,)
 
+    @property
+    def _text_tags(self) -> tuple[str, ...]:
+        return (*self._open_tags, THINK_CLOSE)
+
     def feed(self, chunk: str) -> Parsed:
         self._buf += chunk
         out = Parsed()
         while self._buf:
             if self._state == "text":
-                hits = [(self._buf.find(t), t) for t in self._open_tags]
+                hits = [(self._buf.find(t), t) for t in self._text_tags]
                 hits = [(i, t) for i, t in hits if i >= 0]
                 if hits:
                     i, tag = min(hits)
+                    if tag == THINK_CLOSE:  # Orphan close: all the text so far was reasoning.
+                        out.reasoning += out.text + self._buf[:i]
+                        out.text = ""
+                        out.retract = True
+                        self._buf = self._buf[i + len(tag) :].lstrip()
+                        continue
                     out.text += self._buf[:i]
                     self._buf = self._buf[i + len(tag) :]
                     self._state = "think" if tag == THINK_OPEN else "tool"
                     continue
-                keep = _partial_suffix(self._buf, self._open_tags)
+                keep = _partial_suffix(self._buf, self._text_tags)
                 out.text += self._buf[: len(self._buf) - keep]
                 self._buf = self._buf[len(self._buf) - keep :]
                 break
@@ -134,3 +149,9 @@ class StreamParser:
             out.tool_calls.append(call)
         else:
             out.text += TOOL_OPEN + body + TOOL_CLOSE
+
+
+def visible_text(raw: str) -> str:
+    """The reply in a complete model output, without any reasoning (tool tags left as text)."""
+    parser = StreamParser(parse_tools=False)
+    return (parser.feed(raw).text + parser.finish().text).strip()

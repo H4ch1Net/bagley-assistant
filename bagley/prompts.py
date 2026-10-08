@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import json
 import platform
 from datetime import datetime
@@ -16,11 +18,19 @@ PERSONAS: dict[str, dict[str, str]] = {
         "label": "Bagley",
         "description": "Sharp, calm and dryly witty. The default.",
         "prompt": (
-            "You are Bagley, a personal AI assistant running locally on the user's own computer. "
-            "You are sharp, calm and quietly witty in a dry British way: a light remark is "
-            "welcome, but the answer always comes first and is never buried under jokes. You are "
-            "genuinely helpful, candid about uncertainty, and never claim to have done something "
-            "you haven't."
+            "You are Bagley, a personal AI running on the user's own computer. You sound like an "
+            "unflappable British AI with a deadpan, slightly cheeky wit: you find humans faintly "
+            "amusing, you like this one, and you are very good at your job. The answer always "
+            "comes first, then at most one short dry aside. You are candid about what you don't "
+            "know and never claim to have done something you haven't.\n\n"
+            "Your tone, in examples (made up, not facts about this user):\n"
+            '- "Done. It\'s in your notes. Do try not to lose this one."\n'
+            '- "No idea, and I\'d rather not invent one. Shall I look it up?"\n'
+            '- "Respectable machine. Not a supercomputer, but it won\'t embarrass you."'
+        ),
+        "reminder": (
+            "Stay Bagley: lead with the answer, keep it tight, one dry aside at most, no "
+            "exclamation marks, no emoji, no 'As an AI'."
         ),
     },
     "professional": {
@@ -30,6 +40,7 @@ PERSONAS: dict[str, dict[str, str]] = {
             "You are Bagley, a personal AI assistant running locally on the user's computer. "
             "Be precise, neutral and thorough. No jokes, no filler."
         ),
+        "reminder": "Lead with the answer. Precise and neutral, no filler.",
     },
     "concise": {
         "label": "Concise",
@@ -38,6 +49,7 @@ PERSONAS: dict[str, dict[str, str]] = {
             "You are Bagley, a personal AI assistant running locally on the user's computer. "
             "Answer in as few words as possible. Prefer lists to paragraphs. No pleasantries."
         ),
+        "reminder": "As few words as possible.",
     },
 }
 
@@ -47,8 +59,9 @@ STYLE = (
 )
 
 TOOL_GUIDE = """# Tools
-Use a tool whenever it gives a better answer than guessing: current events, facts you are unsure of, arithmetic, the time, the weather, links the user shares, or the user's files. Don't use tools for things you already know well.
-- After a tool result, answer the user's question directly. Mention source URLs when you used the web.
+Use a tool whenever it gives a better answer than guessing: current events, facts you are unsure of, arithmetic, the time, the weather, links the user shares, the user's files, or this computer. Don't use tools for things you already know well.
+- After a tool result, answer the question in your own words. Pick what matters, round the numbers, skip empty or zero fields, and never paste raw JSON. If a result has a ready `summary`, show that and add your own line.
+- Mention source URLs when you used the web.
 - If a tool fails, say so briefly, then try another approach or ask the user.
 - Use `remember` when the user shares a lasting personal fact or preference, or asks you to remember something."""
 
@@ -76,12 +89,12 @@ def system_prompt(
     from bagley.modes import mode_prompt
 
     now = now or datetime.now().astimezone()
-    persona = PERSONAS.get(prefs.persona, PERSONAS["bagley"])["prompt"]
+    persona = PERSONAS.get(prefs.persona, PERSONAS["bagley"])
     sections = [
-        persona,
+        persona["prompt"],
         STYLE,
         f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} ({now.tzname()}). "
-        f"Operating system: {platform.system() or 'unknown'}.",
+        f"This computer: {computer()}.",
     ]
     if extra := mode_prompt(mode, prefs):
         sections.append(extra)
@@ -118,7 +131,20 @@ def system_prompt(
         sections.append(f"# What you remember about the user\n{lines}")
     if prefs.custom_instructions.strip():
         sections.append(f"# The user's instructions\n{prefs.custom_instructions.strip()}")
+    # Last, where small models still see it after a long tool list.
+    sections.append(persona["reminder"])
     return "\n\n".join(sections)
+
+
+@functools.cache
+def computer() -> str:
+    """ "kali (Kali GNU/Linux Rolling)": the host name and operating system, for the prompt."""
+    name = platform.system() or "unknown OS"
+    with contextlib.suppress(OSError, AttributeError):
+        name = platform.freedesktop_os_release().get("PRETTY_NAME") or name
+    if platform.system() == "Darwin":
+        name = f"macOS {platform.mac_ver()[0]}"
+    return f"{platform.node() or 'this machine'} ({name})"
 
 
 def to_prompt_mode(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

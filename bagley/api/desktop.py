@@ -184,6 +184,9 @@ async def ask(body: AskBody, request: Request) -> StreamingResponse:
             while (event := await queue.get()) is not None:
                 if event["type"] == "text.delta":
                     reply.append(event["text"])
+                elif event["type"] == "text.retract":
+                    joined = "".join(reply)
+                    reply = [joined[: len(joined) - int(event.get("chars") or 0)]]
                 elif event["type"] == "model":
                     machine = event.get("machine", "")
                 elif event["type"] == "message" and reply and not reply[-1].endswith("\n\n"):
