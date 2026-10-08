@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +13,7 @@ from bagley.tools import shell as shell_tools
 from bagley.tools.shell import SANDBOX_ENV, bwrap_args
 from tests.mock_llm import Reply
 
-HOME = PurePosixPath("/home/user")
+HOME = Path("/home/user")
 WORKSPACE = HOME / ".bagley" / "workspace"
 REAL_WHICH = shutil.which
 
@@ -68,15 +68,17 @@ def test_bwrap_args_network_and_extra_paths():
         extra_rw=["/tmp/bagley-run-x"],
     )
     assert args[3] == "--share-net"
+    native = [str(Path(p)) for p in ("/var/lib/bagley", "/run", "/srv/ws/.bagley", "/srv/ws")]
+    lib, run, data, ws = native  # As the platform writes them (backslashes on Windows).
     tmpfs = pairs(args, "--tmpfs")
     # Hidden folders outside the workspace go before it, the ones inside it after it; the
     # workspace itself and folders under the home folder or another hidden one need nothing.
-    assert tmpfs == ["/tmp", str(HOME), "/var/lib/bagley", "/run", "/srv/ws/.bagley"]
-    order = [i for i, a in enumerate(args) if a in ("/var/lib/bagley", "/srv/ws/.bagley")]
+    assert tmpfs == ["/tmp", str(HOME), lib, run, data]
+    order = [i for i, a in enumerate(args) if a in (lib, data)]
     bind = args.index("--bind")
     assert order[0] < bind < order[1]
     assert pairs(args, "--ro-bind") == ["/", str(HOME / ".venv")]
-    assert pairs(args, "--bind") == ["/srv/ws", "/tmp/bagley-run-x"]
+    assert pairs(args, "--bind") == [ws, "/tmp/bagley-run-x"]  # Extra mounts pass as given.
     assert args.index(str(HOME / ".venv")) > bind
 
 

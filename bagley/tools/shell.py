@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterable
-from pathlib import Path, PurePath, PurePosixPath
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -116,7 +116,7 @@ async def _run(
 # Sandbox ----------------------------------------------------------------------------------------
 
 
-def _within(path: PurePath, parent: PurePath) -> bool:
+def _within(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
@@ -136,16 +136,16 @@ def bwrap_args(
     writable, so it stays usable when it lives under the home folder. ``extra_ro`` and
     ``extra_rw`` are bound last (an interpreter, a temp folder). Every namespace is unshared
     (the network too unless ``network``), the environment is cleared and all capabilities are
-    dropped. Paths should be absolute and resolved. They are Linux paths whatever runs this.
+    dropped. Paths should be absolute and resolved.
     """
-    ws = PurePosixPath(workspace)
-    home_dir = PurePosixPath(home if home is not None else Path.home())
+    ws = Path(workspace)
+    home_dir = Path(home) if home is not None else Path.home()
     args = ["--die-with-parent", "--new-session", "--unshare-all"]
     if network:
         args.append("--share-net")
     args += ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"]
     args += ["--tmpfs", "/tmp", "--dir", SANDBOX_HOME, "--tmpfs", str(home_dir)]
-    hidden = [PurePosixPath(p) for p in hide]
+    hidden = [Path(p) for p in hide]
     inside = [p for p in hidden if p != ws and _within(p, ws)]
     outside = [p for p in hidden if p != ws and p not in inside]
     for path in outside:
