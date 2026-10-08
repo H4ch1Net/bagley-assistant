@@ -1400,6 +1400,31 @@ button.stat:hover { background: var(--surface-2); border-left-color: var(--chrom
 .hosted-api .name { font-size: .82rem; color: var(--text-strong); }
 .hosted-api .state { font: 600 .66rem/1.3 var(--font-mono); letter-spacing: .08em; color: var(--text-3); }
 
+a.btn { text-decoration: none; }
+
+/* Work: client cards like workspace cells; the selected one is outlined in chrome. */
+.client-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
+.client-card {
+  display: grid; gap: 3px; justify-items: start; padding: 8px 10px; text-align: left;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text); cursor: pointer; font: inherit;
+}
+.client-card:hover { background: var(--surface-2); }
+.client-card[aria-pressed="true"] { border-color: var(--chrome); }
+.client-card:focus-visible { outline: 1px solid var(--chrome); outline-offset: 1px; }
+.client-card .name { font-size: .84rem; color: var(--text-strong); text-transform: uppercase; letter-spacing: .05em; }
+.client-card .state { font: .68rem/1.3 var(--font-mono); letter-spacing: .06em; color: var(--text-3); }
+.asset-row { align-items: flex-start; }
+.asset-row > .wd-status { flex: none; width: 52px; margin-top: 2px; }
+.wd-status.unknown { color: var(--text-3); }
+.ticket-out:empty { display: none; }
+.ticket-out { padding: 10px 12px; border: 1px solid var(--border); background: var(--bg); margin-bottom: 6px; }
+
+/* Shell: copyable snippets; the suggestion is shown, never run. */
+.snippet { position: relative; }
+.snippet .term { padding-right: 40px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.snippet .icon-btn { position: absolute; top: 4px; right: 4px; }
+.shell-out .notice { margin-bottom: 8px; }
+
 /* Watchdog report: a status column, title, summary; findings open under warnings. */
 .wd { padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); }
 .wd-top { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }

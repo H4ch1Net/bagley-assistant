@@ -400,3 +400,37 @@ def test_add_claude_from_the_hosted_api_presets(page, stack, monkeypatch):
         "sk-ant-ui",
         "claude-opus-5-5",
     )
+
+
+def test_work_assets_and_health_checks(page, stack):
+    page.keyboard.press("Control+,")
+    page.click("#tab-work")
+    page.click("#settings-panel button:has-text('Add asset')")
+    form = page.locator(".asset-form")
+    form.get_by_label("Client", exact=True).fill("ACME")
+    form.get_by_label("Name", exact=True).fill("web01")
+    form.get_by_label("IP address").fill("127.0.0.1")
+    form.get_by_label("Checks").fill(f'[{{"type": "tcp", "port": {stack.app_port}}}]')
+    form.locator("button:has-text('Add asset')").click()
+    expect(page.locator(".toast >> text=web01 added")).to_be_visible()
+    row = page.locator(".asset-row").filter(has_text="web01")
+    expect(row).to_contain_text("127.0.0.1")
+    expect(page.locator(".client-card").filter(has_text="ACME")).to_contain_text("NOT CHECKED")
+    page.click("#settings-panel button:has-text('Run checks')")
+    expect(page.locator("#settings-panel .term")).to_contain_text("[OK  ] ACME/web01")
+    expect(row.locator(".wd-status")).to_have_text("[OK]")
+    page.locator(".client-card").filter(has_text="ACME").click()
+    expect(page.locator(".client-card[aria-pressed='true']")).to_contain_text("ACME")
+
+
+def test_shell_tab_suggests_without_running(page, stack):
+    stack.mock.script = [Reply(text="```bash\nfind ~ -size +1G\n```\n# files over 1 GB")]
+    page.keyboard.press("Control+,")
+    page.click("#tab-shell")
+    expect(page.locator("#settings-panel")).to_contain_text(
+        "source ~/.local/share/bagley/zsh/bagley.zsh"
+    )
+    page.get_by_label("What you want to do").fill("find files over 1GB")
+    page.keyboard.press("Enter")
+    expect(page.locator(".shell-out .term")).to_have_text("find ~ -size +1G")
+    expect(page.locator(".shell-out")).to_contain_text("not run")

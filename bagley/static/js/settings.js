@@ -16,10 +16,12 @@ import * as memory from "./panels/memory.js";
 import * as model from "./panels/model.js";
 import * as notifications from "./panels/notifications.js";
 import * as routines from "./panels/routines.js";
+import * as shell from "./panels/shell.js";
 import * as study from "./panels/study.js";
 import * as tools from "./panels/tools.js";
 import * as voicePanel from "./panels/voice.js";
 import * as watchdog from "./panels/watchdog.js";
+import * as work from "./panels/work.js";
 
 export { pullModel, RECOMMENDED_MODELS, savePrefs } from "./settings-kit.js";
 
@@ -42,6 +44,9 @@ const TABS = [
   { group: "Devices" },
   { id: "notifications", label: "Notifications", icon: "bell", panel: notifications },
   { id: "devices", label: "Desktop & phone", icon: "monitor", panel: devices },
+  { id: "shell", label: "Shell", icon: "terminal", panel: shell },
+  { group: "Work" },
+  { id: "work", label: "Clients & assets", icon: "briefcase", panel: work },
   { group: "Look" },
   { id: "appearance", label: "Appearance", icon: "sun", panel: appearance },
 ];
