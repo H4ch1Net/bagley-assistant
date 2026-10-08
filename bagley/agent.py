@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError
+from bagley.llm import LLMError, Provider, ToolCall, ToolsUnsupportedError, UnreachableError
 from bagley.llm.textparse import StreamParser
+from bagley.modes import get_mode
+from bagley.permissions import denied, permission_for
 from bagley.policy import UnattendedPolicy
 from bagley.prompts import TITLE_PROMPT, clean_title, heuristic_title, system_prompt, to_prompt_mode
+from bagley.routing import Route
 from bagley.runtime import Runtime
 from bagley.toolroute import select_tools
 from bagley.tools import Tool, ToolError
@@ -26,6 +31,8 @@ Approve = Callable[[ToolCall, Tool], Awaitable[bool]]
 ToolMode = Literal["native", "prompt", "off"]
 
 RESULT_PREVIEW_CHARS = 4000
+IMAGE_TOKENS = 800  # Rough context cost of one image.
+CAPTURE_NAME = re.compile(r"^[\w.-]{1,80}\.(png|jpe?g|webp|gif)$")
 
 
 @dataclass
@@ -35,6 +42,18 @@ class RunRequest:
     mode: Literal["send", "regenerate", "edit"] = "send"
     tools: bool = True
     policy: UnattendedPolicy | None = None  # Set for runs nobody is watching.
+    source: str = "web"  # web, cli, overlay, shell, voice, phone, automation, routine
+    images: list[str] = field(default_factory=list)  # Capture file names for the vision model.
+    conversation_mode: str | None = None  # Mode of a conversation this run creates.
+    user_meta: dict[str, Any] = field(default_factory=dict)  # Stored with the user message.
+
+
+@dataclass
+class _RunInfo:
+    cid: str
+    source: str
+    prefs: Any
+    policy: UnattendedPolicy | None = None
 
 
 @dataclass
@@ -162,19 +181,46 @@ class Agent:
             busy.add(cid)
             claimed.append(cid)
 
+        run_id = uuid.uuid4().hex[:8]
+        activity = self.rt.activity
+        outcome = {"failed": False, "stopped": False}
+
+        async def tracked(event: dict[str, Any]) -> None:
+            kind = event["type"]
+            if kind == "status":
+                await activity.update(run_id, state=event["state"], tool=event.get("tool", ""))
+            elif kind == "run.start":
+                await activity.update(
+                    run_id, conversation_id=event["conversation_id"], source=req.source
+                )
+            elif kind == "model":
+                await activity.update(
+                    run_id, machine=event.get("machine", ""), model=event.get("model", "")
+                )
+            elif kind == "error":
+                outcome["failed"] = True
+            elif kind == "run.end":
+                outcome["stopped"] = bool(event.get("stopped"))
+            await emit(event)
+
         try:
-            await self._run(req, emit, approve, claim)
+            await self._run(req, tracked, approve, claim, run_id)
         finally:
             for cid in claimed:
                 busy.discard(cid)
+            await activity.end(run_id, failed=outcome["failed"], stopped=outcome["stopped"])
 
     async def _run(
-        self, req: RunRequest, emit: Emit, approve: Approve, claim: Callable[[str], None]
+        self,
+        req: RunRequest,
+        emit: Emit,
+        approve: Approve,
+        claim: Callable[[str], None],
+        run_id: str,
     ) -> None:
         rt = self.rt
         store = rt.store
         prefs, _ = rt.preferences()
-        run_id = uuid.uuid4().hex[:8]
         started = time.monotonic()
 
         async def reject(message: str, cid: str | None = None) -> None:
@@ -199,7 +245,10 @@ class Agent:
             if req.mode != "send":
                 await reject("That conversation no longer exists.")
                 return
-            conv = store.create_conversation(heuristic_title(req.text))
+            conv = store.create_conversation(
+                heuristic_title(req.text),
+                mode=get_mode(req.conversation_mode or prefs.default_mode).id,
+            )
             await emit({"type": "conversation", "conversation": conv})
         cid = conv["id"]
         claim(cid)
@@ -207,8 +256,14 @@ class Agent:
         user_message = None
         history = store.list_messages(cid)
         last_user = next((m for m in reversed(history) if m["role"] == "user"), None)
+        user_meta = dict(req.user_meta)
+        images = [name for name in req.images if CAPTURE_NAME.match(name)]
+        if images:
+            user_meta["images"] = images
+        if req.source != "web":
+            user_meta.setdefault("source", req.source)
         if req.mode == "send":
-            user_message = store.add_message(cid, "user", req.text.strip())
+            user_message = store.add_message(cid, "user", req.text.strip(), meta=user_meta or None)
         elif last_user is None:
             await reject("There is nothing to regenerate yet.", cid)
             return
@@ -216,8 +271,16 @@ class Agent:
             store.delete_messages_from(cid, last_user["id"] + 1)
         else:  # edit
             store.delete_messages_from(cid, last_user["id"])
-            user_message = store.add_message(cid, "user", req.text.strip() or last_user["content"])
+            user_message = store.add_message(
+                cid,
+                "user",
+                req.text.strip() or last_user["content"],
+                meta=user_meta or last_user.get("meta") or None,
+            )
         first_text = (user_message or last_user or {}).get("content", "")
+        turn_images = ((user_message or last_user or {}).get("meta") or {}).get("images") or []
+        conv_mode = get_mode((store.get_conversation(cid) or {}).get("mode"))
+        info = _RunInfo(cid=cid, source=req.source, prefs=prefs, policy=req.policy)
 
         await emit(
             {
@@ -233,55 +296,63 @@ class Agent:
         pending_calls: list[ToolCall] = []
         stats: dict[str, Any] = {"completion_tokens": 0}
         model = ""
+        route: Route | None = None
         stopped = False
         try:
-            provider = await rt.provider()
-            model = await rt.resolve_model(provider, prefs)
-            caps = await provider.capabilities(model)
+            purpose = "vision" if turn_images else "chat"
+            route = await rt.router.choose(prefs, purpose)
+            tried: set[str] = {route.machine.id}
             tools = (
-                rt.registry.enabled(prefs.disabled_tools)
-                if prefs.tool_mode != "off" and req.tools
-                else []
+                rt.registry.enabled(denied(prefs)) if prefs.tool_mode != "off" and req.tools else []
             )
-            mode: ToolMode = "off"
-            if tools:
-                if prefs.tool_mode in ("native", "prompt"):
-                    mode = prefs.tool_mode
-                elif caps.tools is False or model in rt.prompt_mode_models:
-                    mode = "prompt"
-                else:
-                    mode = "native"
-            think = prefs.think if caps.thinking else None
-            await emit({"type": "model", "model": model, "tool_mode": mode})
+            mode, think = await self._setup(route, prefs, tools, emit)
+            provider, model = route.provider, route.model
 
             for index in range(prefs.max_steps):
                 offered = tools
                 if prefs.tool_routing and tools:
-                    offered = select_tools(tools, store.list_messages(cid))
+                    offered = select_tools(tools, store.list_messages(cid), conv_mode.groups)
                     self._offered = {t.name: t for t in offered}
-                messages = self._context(prefs, cid, offered, mode)
+                messages = self._context(prefs, cid, offered, mode, conv_mode.id)
                 await emit({"type": "status", "state": "thinking"})
-                step = _Step()
-                try:
-                    await self._stream(
-                        step, provider, model, messages, offered, mode, think, prefs, emit
-                    )
-                except ToolsUnsupportedError:
-                    if mode != "native" or step.text or step.reasoning:
-                        raise
-                    mode = "prompt"
-                    rt.prompt_mode_models.add(model)
-                    await emit(
-                        {
-                            "type": "notice",
-                            "message": f"{model} has no native tool support. Using text-based tool calls.",
-                        }
-                    )
-                    messages = self._context(prefs, cid, offered, mode)
+                while True:
                     step = _Step()
-                    await self._stream(
-                        step, provider, model, messages, offered, mode, think, prefs, emit
-                    )
+                    try:
+                        await self._stream(
+                            step, provider, model, messages, offered, mode, think, prefs, emit
+                        )
+                        break
+                    except ToolsUnsupportedError:
+                        if mode != "native" or step.text or step.reasoning:
+                            raise
+                        mode = "prompt"
+                        rt.prompt_mode_models.add(model)
+                        await emit(
+                            {
+                                "type": "notice",
+                                "message": f"{model} has no native tool support. Using text-based tool calls.",
+                            }
+                        )
+                        messages = self._context(prefs, cid, offered, mode, conv_mode.id)
+                    except UnreachableError:
+                        # Nothing streamed yet: let the next machine take over.
+                        if step.text or step.reasoning or step.calls:
+                            raise
+                        next_route = await self._failover(route, prefs, purpose, tried)
+                        if next_route is None:
+                            raise
+                        await emit(
+                            {
+                                "type": "notice",
+                                "message": f"{route.machine.name} is not answering. "
+                                f"Switching to {next_route.machine.name}.",
+                            }
+                        )
+                        route = next_route
+                        tried.add(route.machine.id)
+                        mode, think = await self._setup(route, prefs, tools, emit)
+                        provider, model = route.provider, route.model
+                        messages = self._context(prefs, cid, offered, mode, conv_mode.id)
 
                 step_stats = self._step_stats(step)
                 stats["completion_tokens"] += step_stats["completion_tokens"]
@@ -293,7 +364,11 @@ class Agent:
                     step.text.strip(),
                     reasoning=step.reasoning.strip(),
                     tool_calls=[c.to_message() for c in step.calls] or None,
-                    meta={"model": model, **{k: v for k, v in step_stats.items() if v is not None}},
+                    meta={
+                        "model": model,
+                        "machine": route.machine.name,
+                        **{k: v for k, v in step_stats.items() if v is not None},
+                    },
                 )
                 # Hand the step over before the next await, so a stop during the send below
                 # neither saves the text twice nor leaves its tool calls without results.
@@ -303,9 +378,7 @@ class Agent:
                 if not pending_calls:
                     break
                 while pending_calls:
-                    await self._run_tool(
-                        cid, pending_calls[0], emit, approve, prefs.disabled_tools, req.policy
-                    )
+                    await self._run_tool(info, pending_calls[0], emit, approve)
                     pending_calls.pop(0)
                 if index == prefs.max_steps - 1:
                     await emit(
@@ -325,9 +398,11 @@ class Agent:
             log.exception("Agent run failed")
             self._save_partial(cid, step, pending_calls, model)
             await emit({"type": "error", "message": f"Something went wrong: {exc}"})
+        machine = route.machine.name if route else ""
 
         stats["duration_ms"] = round((time.monotonic() - started) * 1000)
         stats["context_tokens"] = prefs.context_tokens
+        stats["machine"] = machine
         await emit(
             {
                 "type": "run.end",
@@ -337,15 +412,41 @@ class Agent:
                 "stats": stats,
             }
         )
-        if is_new and prefs.smart_titles and model and not stopped:
-            task = asyncio.create_task(self._smart_title(cid, first_text, model, emit))
+        if is_new and prefs.smart_titles and model and route and not stopped:
+            task = asyncio.create_task(self._smart_title(cid, first_text, route, emit))
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+
+    async def _setup(
+        self, route: Route, prefs: Any, tools: list[Tool], emit: Emit
+    ) -> tuple[ToolMode, bool | None]:
+        """Tool-calling mode and reasoning switch for the model on ``route``; announces it."""
+        caps = await route.provider.capabilities(route.model)
+        mode: ToolMode = "off"
+        if tools:
+            if prefs.tool_mode in ("native", "prompt"):
+                mode = prefs.tool_mode
+            elif caps.tools is False or route.model in self.rt.prompt_mode_models:
+                mode = "prompt"
+            else:
+                mode = "native"
+        think = prefs.think if caps.thinking else None
+        await emit({"type": "model", "tool_mode": mode, **route.describe()})
+        return mode, think
+
+    async def _failover(
+        self, route: Route, prefs: Any, purpose: str, tried: set[str]
+    ) -> Route | None:
+        self.rt.router.mark_down(route.machine)
+        try:
+            return await self.rt.router.choose(prefs, purpose, exclude=tried)  # type: ignore[arg-type]
+        except LLMError:
+            return None
 
     # Context --------------------------------------------------------------------------------
 
     def _context(
-        self, prefs: Any, cid: str, tools: list[Tool], mode: ToolMode
+        self, prefs: Any, cid: str, tools: list[Tool], mode: ToolMode, conv_mode: str = ""
     ) -> list[dict[str, Any]]:
         rt = self.rt
         system = system_prompt(
@@ -355,14 +456,37 @@ class Agent:
             workspace=str(rt.config.workspace),
             prompt_mode=mode == "prompt",
             knowledge=rt.knowledge.status(),
+            mode=conv_mode,
         )
+        stored = rt.store.list_messages(cid)
+        last_user = next((m for m in reversed(stored) if m["role"] == "user"), None)
+        images = self._load_images((last_user or {}).get("meta", {}).get("images") or [])
         reserve = min(2048, prefs.context_tokens // 4)
         specs = len(json.dumps([t.spec() for t in tools])) // 3 if mode == "native" else 0
-        budget = max(512, prefs.context_tokens - reserve - len(system) // 3 - specs)
-        history = fit_history(rt.store.list_messages(cid), budget)
+        budget = prefs.context_tokens - reserve - len(system) // 3 - specs
+        budget = max(512, budget - IMAGE_TOKENS * len(images))
+        history = fit_history(stored, budget)
         if mode != "native":
             history = to_prompt_mode(history)
+        if images:
+            # Only the current turn's images go to the model; older ones would fill the window.
+            for message in reversed(history):
+                if message["role"] == "user":
+                    message["images"] = images
+                    break
         return [{"role": "system", "content": system}, *history]
+
+    def _load_images(self, names: list[str]) -> list[str]:
+        out = []
+        for name in names[:4]:
+            if not CAPTURE_NAME.match(name):
+                continue
+            path = self.rt.captures_dir / name
+            try:
+                out.append(base64.b64encode(path.read_bytes()).decode())
+            except OSError:
+                log.warning("Capture %s is missing", name)
+        return out
 
     # Streaming ------------------------------------------------------------------------------
 
@@ -443,38 +567,38 @@ class Agent:
 
     # Tools ----------------------------------------------------------------------------------
 
-    async def _run_tool(
-        self,
-        cid: str,
-        call: ToolCall,
-        emit: Emit,
-        approve: Approve,
-        disabled: list[str],
-        policy: UnattendedPolicy | None = None,
-    ) -> None:
+    async def _run_tool(self, info: _RunInfo, call: ToolCall, emit: Emit, approve: Approve) -> None:
+        prefs, cid, policy = info.prefs, info.cid, info.policy
+        blocked = set(denied(prefs))
         tool = self.rt.registry.get(call.name) or self._offered.get(call.name)
-        if tool and tool.name in disabled:
+        if tool and tool.name in blocked:
             tool = None
+        permission = permission_for(tool, prefs) if tool else "deny"
         await emit(
             {
                 "type": "tool.start",
                 "call": {"id": call.id, "name": call.name, "arguments": call.arguments},
                 "summary": tool.summary if tool else "",
                 "risk": tool.risk if tool else "safe",
+                "permission": permission,
                 "category": tool.category if tool else "general",
             }
         )
         started = time.monotonic()
         ok = False
+        ran = False
         ui: dict[str, Any] = {}
+        decision = "unknown"
         if tool is None:
-            names = ", ".join(t.name for t in self.rt.registry.enabled(disabled))
+            names = ", ".join(t.name for t in self.rt.registry.enabled(blocked))
             result = f"Error: there is no tool named '{call.name}'. Available tools: {names}"
         elif policy and (reason := policy.check(tool, call.arguments)):
             result = f"Not run: {reason}"
+            decision = "blocked"
         else:
             allowed = True
-            if tool.risk == "confirm":
+            decision = "auto"
+            if permission == "ask":
                 await emit({"type": "status", "state": "approval"})
                 await emit(
                     {
@@ -484,12 +608,14 @@ class Agent:
                     }
                 )
                 allowed = await approve(call, tool)
+                decision = "approved" if allowed else "denied"
                 await emit({"type": "approval.result", "id": call.id, "allowed": allowed})
             if not allowed:
                 result = "The user declined this action. Don't retry it unless they ask."
             else:
                 await emit({"type": "status", "state": "tool", "tool": call.name})
                 started = time.monotonic()
+                ran = True
                 try:
                     result, ui = await tool.run(call.arguments, self.rt.tool_context(cid))
                     ok = True
@@ -509,6 +635,21 @@ class Agent:
             name=call.name,
             meta={"ok": ok, "duration_ms": duration, **({"ui": ui} if ui else {})},
         )
+        try:
+            self.rt.store.add_audit(
+                conversation_id=cid,
+                source=info.source,
+                tool=call.name,
+                arguments=call.arguments,
+                permission=permission,
+                decision=decision,
+                ok=ok if ran else None,
+                duration_ms=duration if ran else None,
+                sandboxed=bool(ui.get("sandboxed")),
+                detail=None if ok else result[:300],
+            )
+        except Exception:  # The audit log must never break a run.
+            log.exception("Could not write the audit log")
         await emit(
             {
                 "type": "tool.end",
@@ -544,9 +685,16 @@ class Agent:
                 meta={"ok": False, "cancelled": True},
             )
 
-    async def _smart_title(self, cid: str, text: str, model: str, emit: Emit) -> None:
+    async def _smart_title(self, cid: str, text: str, route: Route, emit: Emit) -> None:
         try:
-            provider = await self.rt.provider()
+            prefs, _ = self.rt.preferences()
+            provider, model = route.provider, route.model
+            if prefs.light_local and not route.machine.is_local:
+                try:  # Titles are light work; keep the GPU machine for answers.
+                    light = await self.rt.router.choose(prefs, "light")
+                    provider, model = light.provider, light.model
+                except LLMError:
+                    pass
             caps = await provider.capabilities(model)
             raw = await provider.complete(
                 [{"role": "user", "content": TITLE_PROMPT.format(message=text[:600])}],

@@ -296,14 +296,33 @@ class Registry:
                 self.errors.append({"source": f"plugin:{path.name}", "error": str(exc)})
 
 
-def build_registry(config: ServerConfig) -> Registry:
-    from bagley.tools import automation, core, files, knowledge, memory, shell, system, web
+CORE_MODULES = ("core", "web", "files", "knowledge", "memory", "system", "automation")
 
+
+def builtin_modules(config: ServerConfig) -> list[types.ModuleType]:
+    """The core tool modules in a fixed order, then every other module in this package.
+
+    A module can define ``available(config) -> bool`` to register its tools only when the
+    feature is switched on (the shell tools need ``BAGLEY_ENABLE_SHELL``, for example).
+    """
+    import importlib
+    import pkgutil
+
+    names = list(CORE_MODULES)
+    names += sorted(m.name for m in pkgutil.iter_modules(__path__) if m.name not in CORE_MODULES)
+    modules = []
+    for name in names:
+        module = importlib.import_module(f"{__name__}.{name}")
+        check = getattr(module, "available", None)
+        if check is None or check(config):
+            modules.append(module)
+    return modules
+
+
+def build_registry(config: ServerConfig) -> Registry:
     registry = Registry()
-    for module in (core, web, files, knowledge, memory, system, automation):
+    for module in builtin_modules(config):
         registry.add_module(module, "builtin")
-    if config.enable_shell:
-        registry.add_module(shell, "builtin")
     assert config.plugins_dir is not None
     registry.load_plugins(config.plugins_dir)
     return registry

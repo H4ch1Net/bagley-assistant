@@ -422,6 +422,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("-c", "--conversation", help="Continue a conversation by id")
 
     sub.add_parser("doctor", help="Check configuration and model server")
+
+    from bagley.commands import register_all
+
+    register_all(sub)
     common(parser)
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--log-level", default="warning", help=argparse.SUPPRESS)
@@ -437,4 +441,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     command = args.command or "serve"
     handlers = {"serve": cmd_serve, "chat": cmd_chat, "ask": cmd_ask, "doctor": cmd_doctor}
-    return handlers[command](args)
+    if command in handlers:
+        return handlers[command](args)
+    return int(args.func(args) or 0)

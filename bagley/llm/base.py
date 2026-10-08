@@ -92,6 +92,10 @@ class ToolsUnsupportedError(LLMError):
     pass
 
 
+class UnreachableError(LLMError):
+    """The server did not answer at all; another machine may take over."""
+
+
 class Provider(ABC):
     kind = "base"
     supports_pull = False
@@ -162,7 +166,7 @@ class Provider(ABC):
     # Error helpers --------------------------------------------------------------------------
 
     def _unreachable(self, exc: Exception) -> LLMError:
-        return LLMError(
+        return UnreachableError(
             f"Can't reach the model server at {self.display_url}.",
             hint="Start your model server (for Ollama: `ollama serve`) or change the server "
             "URL in Settings → Model.",

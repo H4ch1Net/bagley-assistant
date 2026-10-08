@@ -17,6 +17,7 @@ from bagley.llm.base import (
     Provider,
     ToolCall,
     ToolsUnsupportedError,
+    UnreachableError,
     Usage,
     new_call_id,
 )
@@ -149,7 +150,7 @@ class OllamaProvider(Provider):
                 ):
                     yield chunk
         except httpx.TimeoutException as exc:
-            raise LLMError(
+            raise UnreachableError(
                 "The model server stopped responding.",
                 hint="Large models can take a while to load. Try again, or pick a smaller model.",
             ) from exc

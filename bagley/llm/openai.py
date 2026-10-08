@@ -17,11 +17,34 @@ from bagley.llm.base import (
     Provider,
     ToolCall,
     ToolsUnsupportedError,
+    UnreachableError,
     Usage,
     new_call_id,
 )
 
 _ALLOWED_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
+_IMAGE_TYPES = {
+    "iVBOR": "image/png",
+    "/9j/": "image/jpeg",
+    "R0lG": "image/gif",
+    "UklG": "image/webp",
+}
+
+
+def _image_url(data: str) -> str:
+    mime = next((t for prefix, t in _IMAGE_TYPES.items() if data.startswith(prefix)), "image/png")
+    return f"data:{mime};base64,{data}"
+
+
+def _wire_message(m: Message) -> dict[str, Any]:
+    """OpenAI chat format. Images (base64, as Ollama takes them) become content parts."""
+    out = {k: v for k, v in m.items() if k in _ALLOWED_KEYS}
+    if m.get("images"):
+        out["content"] = [
+            {"type": "text", "text": m.get("content") or ""},
+            *({"type": "image_url", "image_url": {"url": _image_url(i)}} for i in m["images"]),
+        ]
+    return out
 
 
 def openai_base(url: str) -> str:
@@ -74,7 +97,7 @@ class OpenAIProvider(Provider):
     ) -> AsyncIterator[ChatChunk]:
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [{k: v for k, v in m.items() if k in _ALLOWED_KEYS} for m in messages],
+            "messages": [_wire_message(m) for m in messages],
             "temperature": temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -124,7 +147,7 @@ class OpenAIProvider(Provider):
                     if chunk.text or chunk.reasoning or chunk.usage:
                         yield chunk
         except httpx.TimeoutException as exc:
-            raise LLMError("The model server stopped responding.") from exc
+            raise UnreachableError("The model server stopped responding.") from exc
         except httpx.HTTPError as exc:
             raise self._unreachable(exc) from exc
         if pending:

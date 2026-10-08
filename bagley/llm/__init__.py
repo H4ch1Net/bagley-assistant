@@ -15,6 +15,7 @@ from bagley.llm.base import (
     Provider,
     ToolCall,
     ToolsUnsupportedError,
+    UnreachableError,
     Usage,
 )
 from bagley.llm.ollama import OllamaProvider
@@ -31,6 +32,7 @@ __all__ = [
     "Provider",
     "ToolCall",
     "ToolsUnsupportedError",
+    "UnreachableError",
     "Usage",
     "create_provider",
     "detect_kind",

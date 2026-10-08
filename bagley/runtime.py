@@ -7,16 +7,21 @@ import contextlib
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
+from bagley import notify as notifications
+from bagley.activity import Activity
+from bagley.approvals import ApprovalBroker
 from bagley.automations import Scheduler
 from bagley.config import Preferences, ServerConfig, resolve_preferences
 from bagley.knowledge import KnowledgeBase, is_embedding_model
 from bagley.llm import LLMError, Provider, create_provider
 from bagley.mcp import McpManager
+from bagley.routing import Router
 from bagley.store import Store
 from bagley.tools import ToolContext, build_registry
 
@@ -47,6 +52,11 @@ class Runtime:
         self.listeners: set[Callable[[dict[str, Any]], Awaitable[None]]] = set()
         self.scheduler = Scheduler(self)
         self.knowledge = KnowledgeBase(self)
+        self.router = Router(self)
+        self.approvals = ApprovalBroker(self)
+        self.activity = Activity(self)
+        self.services: dict[str, Any] = {}  # Feature singletons, created on first use.
+        self._notify_tasks: set[asyncio.Task[Any]] = set()
         self._provider: Provider | None = None
         self._provider_key: tuple[str, str, str] | None = None
         self._provider_lock = asyncio.Lock()
@@ -63,10 +73,27 @@ class Runtime:
         await self.knowledge.stop()
         self.knowledge.close()
         await self.mcp.stop()
+        await self.approvals.aclose()
+        for task in list(self._notify_tasks):
+            task.cancel()
+        await asyncio.gather(*self._notify_tasks, return_exceptions=True)
+        for service in self.services.values():
+            close = getattr(service, "aclose", None)
+            if close:
+                with contextlib.suppress(Exception):
+                    await close()
+        await self.router.aclose()
         if self._provider:
             await self._provider.aclose()
         await self.http.aclose()
         self.store.close()
+
+    @property
+    def captures_dir(self) -> Path:
+        """Screenshots and images sent to vision models."""
+        path = Path(self.config.data_dir) / "captures"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     # Preferences ----------------------------------------------------------------------------
 
@@ -86,6 +113,8 @@ class Runtime:
         )
         if moved and "api_key" not in changes:
             changes["api_key"] = ""  # Never send a saved key to a different server.
+        if "machines" in changes:
+            changes["machines"] = self._merge_machine_keys(current, changes["machines"])
         try:
             Preferences.model_validate({**current.model_dump(), **changes})
         except ValidationError as exc:
@@ -94,6 +123,31 @@ class Runtime:
             raise ValueError(f"{field}: {first['msg']}") from exc
         self.store.set_preferences(changes)
         return self.preferences()
+
+    @staticmethod
+    def _merge_machine_keys(current: Preferences, machines: Any) -> Any:
+        """The browser never sees machine API keys, so it sends them back empty. Keep a saved
+        key while the machine's server and URL stay the same; drop it when they change."""
+        if not isinstance(machines, list):
+            return machines
+        saved = {m.id: m for m in current.machines}
+        out = []
+        for item in machines:
+            if not isinstance(item, dict):
+                out.append(item)
+                continue
+            item = dict(item)
+            item.pop("has_api_key", None)
+            old = saved.get(str(item.get("id")))
+            same_place = (
+                old is not None
+                and str(item.get("base_url", "")).rstrip("/") == old.base_url.rstrip("/")
+                and item.get("provider", "auto") == old.provider
+            )
+            if not item.get("api_key") and same_place and old is not None:
+                item["api_key"] = old.api_key
+            out.append(item)
+        return out
 
     # Provider -------------------------------------------------------------------------------
 
@@ -167,9 +221,20 @@ class Runtime:
         return delivered
 
     async def notify(
-        self, title: str, body: str = "", *, conversation_id: str | None = None, level: str = "info"
+        self,
+        title: str,
+        body: str = "",
+        *,
+        conversation_id: str | None = None,
+        level: str = "info",
+        desktop: bool | None = None,
+        tags: list[str] | None = None,
     ) -> int:
-        """Show a notification in every open window. Marks the chat unread if nobody sees it."""
+        """Show a notification in every open window, and on the desktop and phone as the
+        preferences allow. Marks the chat unread if no window sees it.
+
+        ``level`` is "info", "important", "critical" or "error" (shown as an error toast and
+        sent as important). ``desktop`` forces the desktop notification on or off."""
         delivered = await self.broadcast(
             {
                 "type": "notification",
@@ -181,7 +246,30 @@ class Runtime:
         )
         if conversation_id and not delivered:
             self.store.set_unread(conversation_id, True)
+        prefs, _ = self.preferences()
+        if prefs.desktop_notifications or prefs.ntfy_url or desktop:
+            note = notifications.Note(
+                title,
+                body,
+                level="important" if level == "error" else level,
+                url=self.link(conversation_id),
+                tags=tags or (["warning"] if level in ("error", "critical") else []),
+            )
+            task = asyncio.create_task(
+                notifications.fan_out(prefs, self.http, note, desktop=desktop)
+            )
+            self._notify_tasks.add(task)
+            task.add_done_callback(self._notify_tasks.discard)
         return delivered
+
+    def link(self, conversation_id: str | None = None) -> str:
+        """A URL that opens Bagley (at a chat), for notification clicks. Uses BAGLEY_PUBLIC_URL
+        when set, e.g. the Tailscale address the phone reaches."""
+        base = (self.env.get("BAGLEY_PUBLIC_URL") or "").rstrip("/")
+        if not base:
+            host = "127.0.0.1" if self.config.host in ("0.0.0.0", "::") else self.config.host
+            base = f"http://{host}:{self.config.port}"
+        return f"{base}/#/c/{conversation_id}" if conversation_id else f"{base}/"
 
     def tool_context(self, conversation_id: str | None = None) -> ToolContext:
         return ToolContext(

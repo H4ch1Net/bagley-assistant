@@ -18,6 +18,11 @@ from urllib.parse import quote
 
 from bagley.tools import ToolContext, ToolError, ToolOutput, tool
 
+
+def available(config: Any) -> bool:
+    return bool(config.enable_shell)
+
+
 MAX_OUTPUT = 8000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 MAX_IMAGES = 6

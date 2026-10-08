@@ -33,6 +33,14 @@ GROUPS: dict[str, tuple[str, str]] = {
 }
 
 ROUTING_THRESHOLD = 14  # Below this many tools, just send them all.
+FEATURE_GROUPS: set[str] = set()
+
+
+def register_group(name: str, description: str, pattern: str) -> None:
+    """Let a feature module's tools load on demand: tools whose category is ``name`` join when
+    a recent message matches ``pattern`` or the model asks for the group."""
+    GROUPS[name] = (description, pattern)
+    FEATURE_GROUPS.add(name)
 
 
 def group_of(tool: Tool) -> str:
@@ -46,6 +54,8 @@ def group_of(tool: Tool) -> str:
         return "files"
     if tool.category == "system":
         return "system"
+    if tool.category in FEATURE_GROUPS:
+        return tool.category
     return "core"
 
 
@@ -73,12 +83,15 @@ def _loader(groups: list[str]) -> Tool:
     )
 
 
-def select_tools(tools: list[Tool], history: Iterable[dict[str, Any]]) -> list[Tool]:
-    """Pick the tools to offer for the next step of a conversation."""
+def select_tools(
+    tools: list[Tool], history: Iterable[dict[str, Any]], force: Iterable[str] = ()
+) -> list[Tool]:
+    """Pick the tools to offer for the next step of a conversation. ``force`` names groups
+    the conversation's mode always needs."""
     if len(tools) <= ROUTING_THRESHOLD:
         return tools
     by_name = {t.name: t for t in tools}
-    active = {"core"}
+    active = {"core", *force}
     users: list[str] = []
     for m in history:
         if m["role"] == "user":

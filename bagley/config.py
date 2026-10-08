@@ -125,6 +125,22 @@ class ServerConfig:
 
 
 Persona = Literal["bagley", "professional", "concise"]
+Permission = Literal["allow", "ask", "deny"]
+
+
+class Machine(BaseModel):
+    """Another model server Bagley can route to, e.g. a desktop GPU over Tailscale or a hosted
+    API. The machine Bagley runs on is configured by the top-level provider fields."""
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
+    name: str = Field(min_length=1, max_length=32)
+    role: Literal["gpu", "local", "cloud"] = "gpu"
+    provider: Literal["auto", "ollama", "openai"] = "auto"
+    base_url: str = Field(min_length=1, max_length=500)
+    api_key: str = ""
+    model: str = ""
+    vision_model: str = ""
+    enabled: bool = True
 
 
 class Preferences(BaseModel):
@@ -145,6 +161,49 @@ class Preferences(BaseModel):
     knowledge_folders: list[str] = Field(default_factory=list)
     embedding_model: str = ""  # "" picks an installed embedding model, "off" disables.
 
+    # Machines and routing. "auto" tries GPU machines, then this one, then cloud fallbacks.
+    machine_name: str = Field("", max_length=32)  # Readout name for this machine; "" = hostname.
+    machines: list[Machine] = Field(default_factory=list)
+    routing: str = Field("auto", max_length=40)  # "auto", "local" or a machine id.
+    light_local: bool = True  # Titles and short shell help stay on this machine.
+    vision_model: str = ""  # Model for screenshots on this machine; "" picks one with vision.
+
+    # Modes change Bagley's instructions and default tools per conversation.
+    default_mode: str = Field("default", max_length=32)
+    work_name: str = Field("ATS", max_length=40)
+    work_languages: list[str] = Field(default_factory=lambda: ["English", "French"])
+
+    # Permission tiers override each tool's default (ask for risky tools, allow the rest).
+    tool_permissions: dict[str, Permission] = Field(default_factory=dict)
+    sandbox: Literal["off", "bwrap"] = "off"
+    sandbox_network: bool = False
+
+    # Notifications beyond the browser.
+    desktop_notifications: bool = False  # notify-send, shown by mako on Hyprland.
+    ntfy_url: str = Field("", max_length=500)  # e.g. https://ntfy.sh/bagley-<random>
+    ntfy_token: str = ""
+    ntfy_level: Literal["all", "important", "critical"] = "important"
+
+    # Voice.
+    tts_engine: Literal["browser", "piper", "elevenlabs"] = "browser"
+    piper_voice: str = Field("", max_length=500)  # Path to an .onnx voice, e.g. en_GB-alan-medium.
+    elevenlabs_key: str = ""
+    elevenlabs_voice: str = Field("", max_length=100)
+    stt_engine: Literal["browser", "whisper"] = "browser"
+    whisper_model: str = Field("", max_length=500)  # Path to a ggml model for whisper.cpp.
+    wake_word: str = Field("bagley", max_length=40)
+
+    # Your own life: Obsidian vaults and code folders for recaps.
+    vaults: list[str] = Field(default_factory=list)
+    code_folders: list[str] = Field(default_factory=lambda: ["~/dev"])
+
+    # An always-on Bagley (e.g. a Surface) that runs automations while this one sleeps.
+    runner_url: str = Field("", max_length=500)
+    runner_token: str = ""
+
+    # Appearance, synced so the desktop overlay and other devices match. Validated in the UI.
+    appearance: dict[str, Any] = Field(default_factory=dict)
+
 
 PREFERENCE_ENV: dict[str, str] = {
     "provider": "BAGLEY_PROVIDER",
@@ -160,7 +219,7 @@ PREFERENCE_ENV: dict[str, str] = {
 }
 
 # Preferences that the browser can read but never see in full.
-SECRET_PREFERENCES = {"api_key"}
+SECRET_PREFERENCES = {"api_key", "ntfy_token", "elevenlabs_key", "runner_token"}
 
 
 def env_preferences(env: Mapping[str, str] | None = None) -> dict[str, Any]:
