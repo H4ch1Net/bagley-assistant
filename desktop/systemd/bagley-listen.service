@@ -1,0 +1,31 @@
+# Bagley's wake word listener, started with your desktop session.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp desktop/systemd/bagley-listen.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bagley-listen
+#   journalctl --user -u bagley-listen -f
+#
+# See docs/voice.md.
+
+[Unit]
+Description=Bagley wake word listener
+Documentation=https://github.com/H4ch1Net/bagley-assistant/blob/main/docs/voice.md
+After=pipewire.service pipewire-pulse.service bagley.service
+
+[Service]
+Type=simple
+# Where `which bagley` points (pipx and pip --user install to ~/.local/bin).
+ExecStart=%h/.local/bin/bagley listen
+Restart=on-failure
+RestartSec=10
+# piper-tts, whisper-cli and pw-record are found on this PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=NO_COLOR=1
+# To reach Bagley on another machine (an always-on runner over Tailscale), put
+# BAGLEY_URL=http://runner:8765 and BAGLEY_TOKEN=... in this file:
+EnvironmentFile=-%h/.config/bagley/listen.env
+
+[Install]
+WantedBy=default.target
