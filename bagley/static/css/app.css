@@ -640,20 +640,6 @@ button.seg:hover, .seg-btn:hover { background: var(--surface-2); }
 }
 .select option { background: var(--surface); color: var(--text-strong); }
 .select option:checked { background: var(--surface-2); }
-/* Where the browser lets a select's list be styled, it's a ctOS launcher list, not the OS's. */
-@supports (appearance: base-select) {
-  .select, .select::picker(select) { appearance: base-select; }
-  .select { display: flex; align-items: center; }
-  .select::picker-icon { display: none; }
-  .select::picker(select) {
-    margin-top: 2px; padding: 4px 0;
-    border: 1px solid var(--chrome); background: var(--bg); color: var(--text);
-  }
-  .select option { padding: 7px 10px; border-left: 2px solid transparent; background: var(--bg); color: var(--text); }
-  .select option::checkmark { display: none; }
-  .select option:hover, .select option:focus-visible { background: var(--surface-2); color: var(--text-strong); outline: none; }
-  .select option:checked { border-left-color: var(--chrome); color: var(--text-strong); }
-}
 .input::placeholder, .textarea::placeholder { color: var(--text-3); }
 .input:hover, .select:hover, .textarea:hover { border-color: var(--text-2); }
 .input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--chrome); box-shadow: inset 2px 0 0 var(--chrome); }
@@ -1263,6 +1249,30 @@ button.stat:hover { background: var(--surface-2); border-left-color: var(--chrom
 }
 
 /* Dialogs: rofi windows ---------------------------------------------------------------------- */
+
+/* The list a select or a suggestion field opens: the ctOS launcher (pickers.js). */
+.picker {
+  position: fixed; z-index: 300;
+  overflow: auto; overscroll-behavior: contain;
+  padding: 4px 0;
+  border: 1px solid var(--chrome);
+  background: var(--bg);
+  box-shadow: var(--shadow-window);
+  font-size: .86rem;
+  animation: fade var(--t-fast) var(--ease);
+}
+.picker-item {
+  padding: 7px 12px 7px 10px;
+  border-left: 2px solid transparent;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.picker-item[aria-selected="true"] { color: var(--text-strong); }
+.picker-item[aria-selected="true"]::before { content: "» "; color: var(--text-3); }
+.picker-item.active { background: var(--surface-2); border-left-color: var(--chrome); color: var(--text-strong); }
+.picker-item[aria-disabled="true"] { opacity: .45; cursor: default; }
+.picker-group { padding: 8px 12px 4px; font-size: .7rem; color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
 
 .dialog {
   width: min(540px, calc(100vw - 32px));

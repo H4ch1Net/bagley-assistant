@@ -320,12 +320,48 @@ def test_file_change_shows_diff_and_reverts(page, stack):
     expect(page.locator(".tool-bar .badge")).to_have_text("Reverted")
 
 
+def test_selects_and_suggestions_open_a_ctos_list(page, stack):
+    """Native select lists and datalists draw in the OS colours (GTK blue on Kali)."""
+    page.keyboard.press("Control+,")
+    page.click("#tab-model")
+    tool_mode = page.locator("select.select:has(option[value='prompt'])")
+    picker = page.locator(".picker")
+    tool_mode.click()
+    expect(picker.locator(".picker-item")).to_have_count(4)
+    expect(picker.locator(".picker-item.active")).to_have_text("Automatic")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(picker).to_have_count(0)
+    assert tool_mode.input_value() == "native"
+    for _ in range(50):
+        if stack.runtime.preferences()[0].tool_mode == "native":
+            break
+        page.wait_for_timeout(50)
+    assert stack.runtime.preferences()[0].tool_mode == "native"
+
+    tool_mode.click()
+    expect(picker).to_be_visible()
+    page.keyboard.press("Escape")  # Closes the list, not the settings.
+    expect(picker).to_have_count(0)
+    expect(page.locator("#settings-dialog")).to_be_visible()
+
+    vision = page.locator("input[placeholder='Automatic (a model that can see)']")
+    vision.focus()
+    page.keyboard.press("ArrowDown")
+    first = picker.locator(".picker-item").first
+    expect(first).to_have_class(re.compile("active"))
+    name = first.inner_text()
+    page.keyboard.press("Enter")
+    assert vision.input_value() == name
+    assert vision.get_attribute("list") is None  # The browser's own dropdown never shows.
+
+
 def test_create_and_run_a_reminder(page, stack):
     page.click("#automations-btn")
     page.click(".segmented >> text=Reminder")
     page.fill("input[placeholder='e.g. Stretch']", "Stretch")
     page.fill("#settings-panel textarea", "Stand up and stretch")
-    page.fill("input[list='schedule-presets']", "in 45 minutes")
+    page.fill("#auto-when", "in 45 minutes")
     expect(page.locator(".field .help").filter(has_text="Once,")).to_be_visible()
     page.click("button:has-text('Create')")
     row = page.locator(".list-item.automation").filter(has_text="Stretch")

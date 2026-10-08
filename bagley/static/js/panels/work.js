@@ -97,7 +97,7 @@ export function render(panel, ctx) {
       hostname: input("hostname", "nas01.acme.lan", { mono: true }), ip: input("ip", "10.0.0.5", { mono: true }),
       os: input("os", "e.g. Windows Server 2022"), serial: input("serial", "Serial number", { mono: true }),
       owner: input("owner", "Who uses it"), location: input("location", "e.g. Server room"),
-      warranty_until: el("input", { class: "input", type: "date", value: a.warranty_until || "" }),
+      warranty_until: el("input", { class: "input mono", value: a.warranty_until || "", placeholder: "YYYY-MM-DD" }),
     };
     const kind = el("select", { class: "select" }, ...KINDS.map((k) => el("option", { value: k, text: k, selected: a.kind === k })));
     const tags = el("input", { class: "input", value: (a.tags || []).join(", "), placeholder: "e.g. critical, office" });

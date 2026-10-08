@@ -52,6 +52,7 @@ const SHELL = [
   "/static/js/panels/voice.js",
   "/static/js/panels/watchdog.js",
   "/static/js/panels/work.js",
+  "/static/js/pickers.js",
   "/static/js/routines.js",
   "/static/js/settings-kit.js",
   "/static/js/settings.js",
