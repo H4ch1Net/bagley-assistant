@@ -368,3 +368,35 @@ def test_watchdog_panel_and_briefing_card(page, stack):
     )
     expect(page.locator(".turn-assistant .wd")).to_contain_text("MORNING BRIEFING // H4CH1")
     expect(page.locator(".turn-assistant .wd .wd-run")).to_be_hidden()
+
+
+def test_add_claude_from_the_hosted_api_presets(page, stack, monkeypatch):
+    from tests.test_claude import FakeClaude, _patched, anthropic
+
+    api = FakeClaude()
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _patched(api, anthropic.AsyncAnthropic))
+    page.keyboard.press("Control+,")
+    page.click("#tab-model")
+    page.click(".hosted-api[data-preset='claude']")
+    form = page.locator("#settings-panel .section").filter(has_text="Add Claude (Anthropic)")
+    expect(form.get_by_label("URL")).to_have_value("https://api.anthropic.com")
+    expect(form.get_by_label("Model", exact=True)).to_have_value("claude-opus-5-5")
+    expect(form.get_by_label("Server type")).to_have_value("anthropic")
+    expect(form.locator("a:has-text('Get a key')")).to_have_attribute(
+        "href", re.compile("console.anthropic.com")
+    )
+    form.get_by_label("API key").fill("sk-ant-ui")
+    form.locator("button:has-text('Test key')").click()
+    expect(form.locator(".status-line")).to_contain_text("Connected · 2 models")
+    assert api.model_headers[-1]["x-api-key"] == "sk-ant-ui"
+    form.locator("button:has-text('Add machine')").click()
+    row = page.locator(".machine-row[data-machine='claude']")
+    expect(row).to_contain_text("cloud")
+    expect(row).to_contain_text("key saved")
+    expect(page.locator(".hosted-api[data-preset='claude'] .state")).to_have_text("ADDED")
+    saved = stack.runtime.preferences()[0].machines[0]
+    assert (saved.provider, saved.api_key, saved.model) == (
+        "anthropic",
+        "sk-ant-ui",
+        "claude-opus-5-5",
+    )

@@ -54,7 +54,7 @@ export function field(label, control, { help, key, id } = {}) {
   return el("div", { class: "field" },
     el("label", { for: target?.id || null }, label, lockNote),
     control,
-    help ? el("div", { class: "help", text: help }) : null,
+    help ? el("div", { class: "help" }, help) : null,
   );
 }
 

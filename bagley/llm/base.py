@@ -56,6 +56,9 @@ class ChatChunk:
     reasoning: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage | None = None
+    # The reply in the provider's own format, replayed to that provider within the turn
+    # (Claude's thinking blocks must come back unchanged). Stored with the message.
+    native: dict[str, Any] | None = None
 
 
 @dataclass
@@ -99,6 +102,7 @@ class UnreachableError(LLMError):
 class Provider(ABC):
     kind = "base"
     supports_pull = False
+    history_tokens = 0  # A bigger history budget than the context setting, for hosted models.
 
     def __init__(
         self,

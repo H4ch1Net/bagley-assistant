@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,11 +19,15 @@ from bagley.llm.base import (
     UnreachableError,
     Usage,
 )
+from bagley.llm.claude import ClaudeProvider
 from bagley.llm.ollama import OllamaProvider
 from bagley.llm.openai import OpenAIProvider
+from bagley.llm.presets import PRESETS
 
 __all__ = [
+    "KEY_ENV",
     "ChatChunk",
+    "ClaudeProvider",
     "LLMError",
     "Message",
     "ModelCapabilities",
@@ -36,11 +41,25 @@ __all__ = [
     "Usage",
     "create_provider",
     "detect_kind",
+    "key_from_env",
 ]
+
+# Hosted APIs and the environment variables their keys usually live in.
+KEY_ENV = {urlsplit(p["base_url"]).hostname: p["key_env"] for p in PRESETS.values()}
+
+
+def key_from_env(kind: str, base_url: str, env: Mapping[str, str]) -> str:
+    """The API key for a hosted API from the environment, when none is saved."""
+    name = KEY_ENV.get(urlsplit(base_url).hostname or "")
+    if name is None and kind == "anthropic":
+        name = "ANTHROPIC_API_KEY"
+    return env.get(name, "") if name else ""
 
 
 async def detect_kind(base_url: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
-    """Guess whether ``base_url`` is an Ollama server or a generic OpenAI-compatible one."""
+    """Guess whether ``base_url`` is Ollama, the Anthropic API or a generic OpenAI-compatible one."""
+    if urlsplit(base_url).hostname == "api.anthropic.com":
+        return "anthropic"
     if urlsplit(base_url).path.rstrip("/").endswith("/v1"):
         return "openai"
     try:
@@ -60,8 +79,13 @@ async def create_provider(
     api_key: str = "",
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> Provider:
     if kind == "auto":
         kind = await detect_kind(base_url, transport)
+    if not api_key and env is not None:
+        api_key = key_from_env(kind, base_url, env)
+    if kind == "anthropic":
+        return ClaudeProvider(base_url, api_key, transport=transport)
     cls = OllamaProvider if kind == "ollama" else OpenAIProvider
     return cls(base_url, api_key, transport=transport)

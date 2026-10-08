@@ -8,13 +8,20 @@ import { el, formatBytes, icon } from "../util.js";
 import { field, header, locked, pullModel, RECOMMENDED_MODELS, savePrefs, section, select, toggleRow, value } from "../settings-kit.js";
 
 const ROLES = [["gpu", "GPU machine"], ["local", "Nearby machine"], ["cloud", "Cloud fallback"]];
+const KINDS = [["auto", "Auto-detect"], ["ollama", "Ollama"], ["openai", "OpenAI-compatible"], ["anthropic", "Anthropic (Claude)"]];
+const CLAUDE_URL = "https://api.anthropic.com";
+const CLAUDE_MODEL = "claude-opus-5-5";
 const ROLE_HELP = { gpu: "Heavy work goes here first when it answers.", local: "Used after this machine.", cloud: "Last resort when no machine of yours answers." };
 
 export function render(panel, ctx) {
-  const provider = select([["auto", "Auto-detect"], ["ollama", "Ollama"], ["openai", "OpenAI-compatible"]], value("provider"), (v) => saveConnection(ctx, { provider: v }));
+  const provider = select(KINDS, value("provider"), (v) => {
+    // Claude needs its own URL and a model; Ollama's localhost URL would never answer.
+    const claude = v === "anthropic" && !/^https:/.test(value("base_url") || "") ? { base_url: CLAUDE_URL, model: value("model") || CLAUDE_MODEL } : {};
+    saveConnection(ctx, { provider: v, ...claude });
+  });
   const baseUrl = el("input", { class: "input mono", value: value("base_url"), spellcheck: "false", placeholder: "http://localhost:11434" });
   baseUrl.addEventListener("change", () => saveConnection(ctx, { base_url: baseUrl.value.trim() }));
-  const apiKey = el("input", { class: "input mono", type: "password", autocomplete: "off", placeholder: value("has_api_key") ? "•••••••• saved" : "Not needed for local servers" });
+  const apiKey = el("input", { class: "input mono", type: "password", autocomplete: "off", placeholder: value("has_api_key") ? "•••••••• saved" : value("provider") === "anthropic" ? "sk-ant-… or ANTHROPIC_API_KEY" : "Not needed for local servers" });
   apiKey.addEventListener("change", () => saveConnection(ctx, { api_key: apiKey.value }));
   const status = el("div", { class: "status-line", "aria-live": "polite" });
   const test = el("button", { class: "btn btn-sm", type: "button", onclick: () => testConnection(status) }, icon("zap", "icon-sm"), "Test connection");
@@ -54,14 +61,14 @@ export function render(panel, ctx) {
   vision.addEventListener("change", () => savePrefs({ vision_model: vision.value.trim() }));
   const localModels = el("datalist", { id: "local-models" }, ...state.models.map((m) => el("option", { value: m.name })));
 
-  header(panel, "Model & machines", "Bagley works with Ollama and any OpenAI-compatible server. Add your other machines and it routes each request to the best one that answers.");
+  header(panel, "Model & machines", "Bagley works with Ollama, any OpenAI-compatible server and Claude. Add your other machines and hosted APIs, and it routes each request to the best one that answers.");
   panel.append(
     section("This machine",
       el("div", { class: "field-row" },
         field("Server type", provider, { key: "provider", id: "pref-provider" }),
         field("Server URL", baseUrl, { key: "base_url", id: "pref-base-url", help: "Ollama 11434 · LM Studio 1234 · llama.cpp 8080" }),
       ),
-      field("API key", apiKey, { key: "api_key", id: "pref-api-key", help: "Only for hosted APIs. Stored in Bagley's local database." }),
+      field("API key", apiKey, { key: "api_key", id: "pref-api-key", help: "Only for hosted APIs (Claude, OpenAI, OpenRouter…). Stored in Bagley's local database, never shown again. Left empty, the usual variable is used, e.g. ANTHROPIC_API_KEY." }),
       el("div", { class: "inline" }, test),
       status,
     ),
@@ -83,7 +90,7 @@ export function render(panel, ctx) {
     ),
   );
   if (locked("model")) modelSelect.disabled = true;
-  if (state.health?.provider === "ollama" || (!state.health && value("provider") !== "openai")) {
+  if (state.health?.provider === "ollama" || (!state.health && ["auto", "ollama"].includes(value("provider")))) {
     panel.append(installedSection(ctx), pullSection(ctx));
   }
   for (const extra of EXTRA_SECTIONS) panel.append(extra(ctx));
@@ -144,26 +151,39 @@ function machinesSection(ctx) {
     );
   };
 
-  const edit = (machine) => {
-    const draft = machine ? { ...machine } : { name: "", role: "gpu", provider: "ollama", base_url: "http://", model: "", vision_model: "", enabled: true };
+  const edit = (machine, preset = null) => {
+    const draft = machine
+      ? { ...machine }
+      : preset
+        ? { name: preset.name, role: "cloud", provider: preset.provider, base_url: preset.base_url, model: preset.model || "", vision_model: "", enabled: true }
+        : { name: "", role: "gpu", provider: "ollama", base_url: "http://", model: "", vision_model: "", enabled: true };
     const name = el("input", { class: "input", value: draft.name, maxlength: 32, placeholder: "e.g. H4CH1" });
     const role = select(ROLES, draft.role, () => (roleHelp.textContent = ROLE_HELP[role.value]));
     const roleHelp = el("div", { class: "help", text: ROLE_HELP[draft.role] });
-    const kind = select([["auto", "Auto-detect"], ["ollama", "Ollama"], ["openai", "OpenAI-compatible"]], draft.provider, () => {});
+    const kind = select(KINDS, draft.provider, () => {});
     const url = el("input", { class: "input mono", value: draft.base_url, spellcheck: "false", placeholder: "http://h4ch1:11434 or https://openrouter.ai/api/v1" });
-    const key = el("input", { class: "input mono", type: "password", autocomplete: "off", placeholder: draft.has_api_key ? "•••••••• saved (leave empty to keep)" : "Only for hosted APIs" });
-    const modelName = el("input", { class: "input mono", value: draft.model || "", spellcheck: "false", placeholder: "Automatic, or e.g. qwen3:14b", list: "machine-models" });
+    const keyHint = preset?.key_in_env ? `Empty: uses ${preset.key_env} from the environment` : preset ? `Paste your ${preset.label} key` : "Only for hosted APIs";
+    const key = el("input", { class: "input mono", type: "password", autocomplete: "off", placeholder: draft.has_api_key ? "•••••••• saved (leave empty to keep)" : keyHint });
+    const keyHelp = preset
+      ? el("span", {}, `Saved in Bagley's local database and never shown again. Or set ${preset.key_env} where Bagley runs. `, el("a", { href: preset.keys_url, target: "_blank", rel: "noopener noreferrer", text: "Get a key" }))
+      : "Saved in Bagley's local database and never shown again.";
+    const modelName = el("input", { class: "input mono", value: draft.model || "", spellcheck: "false", placeholder: preset ? "Press Test key, then pick one" : "Automatic, or e.g. qwen3:14b", list: "machine-models" });
     const visionName = el("input", { class: "input mono", value: draft.vision_model || "", spellcheck: "false", placeholder: "Optional, e.g. qwen2.5vl:7b", list: "machine-models" });
-    const list = el("datalist", { id: "machine-models" });
+    const list = el("datalist", { id: "machine-models" }, ...(preset?.models || []).map((m) => el("option", { value: m })));
     const probe = el("div", { class: "status-line", "aria-live": "polite" });
-    const loadModels = el("button", { class: "btn btn-sm", type: "button" }, icon("refresh-cw", "icon-sm"), "List models");
+    const loadModels = el("button", { class: "btn btn-sm", type: "button" }, icon(preset ? "key-round" : "refresh-cw", "icon-sm"), preset ? "Test key" : "List models");
     loadModels.addEventListener("click", async () => {
-      if (!machine) return toast("Save the machine first, then list its models.");
-      probe.replaceChildren(el("span", { class: "spinner" }), "Asking…");
+      if (!/^https?:\/\/[^/]+/.test(url.value.trim())) return url.focus();
+      probe.replaceChildren(el("span", { class: "spinner" }), "Connecting…");
       try {
-        const data = await api.get(`/api/machines/${encodeURIComponent(machine.id)}/models`);
+        // Works before saving: the typed key, else the saved one, else the environment's.
+        const data = await api.post("/api/machines/test", { provider: kind.value, base_url: url.value.trim(), api_key: key.value, id: machine?.id || "" });
+        if (!data.ok) {
+          probe.replaceChildren(el("span", { class: "dot bad" }), `${data.error} ${data.hint || ""}`.trim());
+          return;
+        }
         list.replaceChildren(...data.models.map((m) => el("option", { value: m.name })));
-        probe.replaceChildren(el("span", { class: "dot ok" }), `${data.models.length} models · ${data.loaded.length} in memory`);
+        probe.replaceChildren(el("span", { class: "dot ok" }), `Connected · ${data.models.length} model${data.models.length === 1 ? "" : "s"}${kind.value === "auto" ? ` · ${data.kind}` : ""}`);
       } catch (err) {
         probe.replaceChildren(el("span", { class: "dot bad" }), err.message);
       }
@@ -174,6 +194,10 @@ function machinesSection(ctx) {
       const label = name.value.trim();
       if (!label) return name.focus();
       if (!/^https?:\/\/[^/]+/.test(url.value.trim())) return toast("Enter the machine's URL, e.g. http://h4ch1:11434", { type: "error" });
+      if (role.value === "cloud" && kind.value === "openai" && !modelName.value.trim()) {
+        toast("Pick a model: hosted APIs list hundreds. Test key shows them.", { type: "error" });
+        return modelName.focus();
+      }
       const list = machines();
       const entry = {
         id: machine?.id || slug(label, new Set(list.map((m) => m.id))),
@@ -183,10 +207,10 @@ function machinesSection(ctx) {
       await save(machine ? list.map((m) => (m.id === machine.id ? entry : m)) : [...list, entry]);
     });
     box.replaceChildren(
-      el("div", { class: "section-title", text: machine ? `Edit ${machine.name}` : "Add a machine" }),
+      el("div", { class: "section-title", text: machine ? `Edit ${machine.name}` : preset ? `Add ${preset.label}` : "Add a machine" }),
       el("div", { class: "field-row" }, field("Name", name, { help: "Shown in the readout, e.g. H4CH1." }), el("div", { class: "field" }, el("label", { text: "Role" }), role, roleHelp)),
-      el("div", { class: "field-row" }, field("Server type", kind), field("URL", url, { help: "Over Tailscale use the machine name: http://h4ch1:11434. Ollama must listen beyond localhost (OLLAMA_HOST=0.0.0.0)." })),
-      field("API key", key),
+      el("div", { class: "field-row" }, field("Server type", kind), field("URL", url, { help: preset || draft.role === "cloud" ? "The API's address. Change it only to go through a proxy." : "Over Tailscale use the machine name: http://h4ch1:11434. Ollama must listen beyond localhost (OLLAMA_HOST=0.0.0.0)." })),
+      field("API key", key, { help: keyHelp }),
       el("div", { class: "field-row" }, field("Model", modelName), field("Vision model", visionName)),
       list,
       el("div", { class: "inline", style: "flex-wrap:wrap" }, submit, cancel, loadModels),
@@ -217,6 +241,7 @@ function machinesSection(ctx) {
         route ? el("span", { class: `dot ${route.ok ? "ok" : "bad"}` }) : el("span", { class: "spinner" }),
         route ? (route.ok ? `Answering now: ${route.machine} · ${route.model}` : `${route.error} ${route.hint || ""}`) : "Checking machines…"),
       el("div", { class: "list", style: "margin-top:10px" }, row({}, true), ...list.map((m) => row(m))),
+      hostedApis(list, (preset) => edit(null, preset)),
       el("div", { class: "inline", style: "margin-top:12px;flex-wrap:wrap" },
         el("button", { class: "btn", type: "button", onclick: () => edit(null) }, icon("plus", "icon-sm"), "Add machine"),
         el("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
@@ -228,6 +253,24 @@ function machinesSection(ctx) {
     );
   };
   draw();
+  return box;
+}
+
+/** One button per hosted API (Claude first); each opens the machine form filled in. */
+function hostedApis(list, open) {
+  const box = el("div", { class: "hosted", "aria-label": "Hosted APIs" },
+    el("div", { class: "field-label", text: "Hosted APIs" }),
+    el("p", { class: "help", style: "margin:0 0 8px", text: "Use an API key as a cloud fallback, or route to it only (Routing above). Keys stay on this machine." }));
+  const grid = el("div", { class: "hosted-grid" });
+  box.append(grid);
+  api.get("/api/machines/presets").then((presets) => {
+    grid.replaceChildren(...presets.map((p) => {
+      const added = list.some((m) => (m.base_url || "").replace(/\/+$/, "") === p.base_url);
+      return el("button", { class: "hosted-api", type: "button", dataset: { preset: p.id }, onclick: () => open(p) },
+        el("span", { class: "name", text: p.label }),
+        el("span", { class: "state", text: added ? "ADDED" : p.key_in_env ? "KEY IN ENV" : "ADD" }));
+    }));
+  }).catch(() => box.remove());
   return box;
 }
 

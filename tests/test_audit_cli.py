@@ -225,6 +225,20 @@ def test_machines_without_a_server(model_server, offline, capsys, monkeypatch):
     assert cli.main(["machines", "remove", "local"]) == 2
 
 
+def test_machines_add_a_hosted_api_by_preset(offline, capsys, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert cli.main(["machines", "add", "Claude", "--preset", "claude"]) == 0
+    out = capsys.readouterr().out
+    assert "[OK] MACHINE claude ADDED  CLOUD  https://api.anthropic.com" in out
+    assert "Set ANTHROPIC_API_KEY" in out
+    store = Store(offline)
+    [saved] = store.get_preferences()["machines"]
+    store.close()
+    assert (saved["provider"], saved["model"]) == ("anthropic", "claude-opus-5-5")
+    assert cli.main(["machines", "add", "Nowhere"]) == 2
+    assert "--preset" in capsys.readouterr().err
+
+
 def test_machines_through_the_server(server, capsys, monkeypatch):
     monkeypatch.setenv("CLOUD_KEY", "sk-cloud")
     argv = ["machines", "add", "Cloud", "http://mock2/v1", "--role", "cloud"]

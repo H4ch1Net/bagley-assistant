@@ -140,7 +140,7 @@ class Machine(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
     name: str = Field(min_length=1, max_length=32)
     role: Literal["gpu", "local", "cloud"] = "gpu"
-    provider: Literal["auto", "ollama", "openai"] = "auto"
+    provider: Literal["auto", "ollama", "openai", "anthropic"] = "auto"
     base_url: str = Field(min_length=1, max_length=500)
     api_key: str = ""
     model: str = ""
@@ -149,7 +149,7 @@ class Machine(BaseModel):
 
 
 class Preferences(BaseModel):
-    provider: Literal["auto", "ollama", "openai"] = "auto"
+    provider: Literal["auto", "ollama", "openai", "anthropic"] = "auto"
     base_url: str = DEFAULT_OLLAMA_URL
     api_key: str = ""
     model: str = ""

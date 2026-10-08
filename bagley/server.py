@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from bagley import __version__, automations, journal
-from bagley.agent import Agent, RunRequest
+from bagley.agent import Agent, RunRequest, public_message
 from bagley.api import routers
 from bagley.approvals import Pending, summarize
 from bagley.config import (
@@ -513,7 +513,7 @@ def create_app(runtime: Runtime | None = None, config: ServerConfig | None = Non
         if conv.get("unread"):
             store.set_unread(cid, False)
             conv["unread"] = 0
-        messages = store.list_messages(cid)
+        messages = [public_message(m) for m in store.list_messages(cid)]
         uis = [m["meta"]["ui"] for m in messages if m["meta"].get("ui", {}).get("journal_id")]
         reverted = store.reverted_ids([ui["journal_id"] for ui in uis])
         for ui in uis:

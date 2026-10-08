@@ -159,7 +159,11 @@ class Runtime:
                 if self._provider:
                     await self._provider.aclose()
                 self._provider = await create_provider(
-                    prefs.provider, prefs.base_url, prefs.api_key, transport=self.llm_transport
+                    prefs.provider,
+                    prefs.base_url,
+                    prefs.api_key,
+                    transport=self.llm_transport,
+                    env=self.env,
                 )
                 self._provider_key = key
                 self.prompt_mode_models.clear()

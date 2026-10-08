@@ -1,7 +1,8 @@
 """``bagley machines``: the machines Bagley routes to, their health and the routing order.
 
     bagley machines [--json] [--fresh]
-    bagley machines add NAME URL [--role gpu|local|cloud] [--provider ...] [--model M] [--key-env VAR]
+    bagley machines add NAME [URL] [--preset claude|openai|openrouter|...] [--role ...]
+                        [--provider ...] [--model M] [--key-env VAR]
     bagley machines remove ID
     bagley machines route [--purpose chat|light|vision]
 
@@ -27,6 +28,7 @@ from pydantic import ValidationError
 from bagley.client import Client, ServerUnavailable
 from bagley.commands.audit import Paint
 from bagley.config import Machine, ServerConfig, normalize_base_url
+from bagley.llm.presets import PRESETS
 
 T = TypeVar("T")
 
@@ -168,6 +170,12 @@ def _save(change: Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any
 
 
 def cmd_add(args: argparse.Namespace) -> int:
+    preset = PRESETS.get(args.preset or "", {})
+    url = args.url or preset.get("base_url", "")
+    if not url:
+        print("[CRIT] Give the server URL, or a hosted API with --preset.", file=sys.stderr)
+        return 2
+    provider = args.provider or preset.get("provider", "auto")
     key = ""
     if args.key_env:
         key = os.environ.get(args.key_env, "").strip()
@@ -177,11 +185,11 @@ def cmd_add(args: argparse.Namespace) -> int:
     entry = {
         "id": machine_id(args.id or args.name),
         "name": args.name.strip()[:32],
-        "role": args.role,
-        "provider": args.provider,
-        "base_url": normalize_base_url(args.url) if args.provider != "openai" else args.url,
+        "role": args.role or ("cloud" if preset else "gpu"),
+        "provider": provider,
+        "base_url": url if provider in ("openai", "anthropic") else normalize_base_url(url),
         "api_key": key,
-        "model": args.model or "",
+        "model": args.model or preset.get("model", ""),
     }
     try:
         Machine.model_validate(entry)
@@ -204,11 +212,14 @@ def cmd_add(args: argparse.Namespace) -> int:
         print(f"[CRIT] {exc}", file=sys.stderr)
         return 1
     paint = Paint()
+    env_key = preset.get("key_env", "")
     print(
         paint.ok("[OK] ")
         + f"MACHINE {entry['id']} ADDED  {entry['role'].upper()}  {entry['base_url']}"
         + ("  KEY " + args.key_env if key else "")
     )
+    if preset and not key and not os.environ.get(env_key):
+        print(f"No key saved. Set {env_key} where Bagley runs, or add it in Settings.")
     return 0
 
 
@@ -287,10 +298,17 @@ def register(sub: argparse._SubParsersAction) -> None:
 
     add = actions.add_parser("add", help="Add a model server, e.g. a desktop GPU over Tailscale")
     add.add_argument("name", help="Display name, e.g. H4CH1")
-    add.add_argument("url", help="Server URL, e.g. http://h4ch1:11434 or host:port")
+    add.add_argument(
+        "url", nargs="?", help="Server URL, e.g. http://h4ch1:11434 (not needed with --preset)"
+    )
+    add.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        help="A hosted API: sets the URL, server type and role cloud (claude: Claude Opus 5.5)",
+    )
     add.add_argument("--id", help="Machine id (default: from the name)")
-    add.add_argument("--role", choices=["gpu", "local", "cloud"], default="gpu")
-    add.add_argument("--provider", choices=["auto", "ollama", "openai"], default="auto")
+    add.add_argument("--role", choices=["gpu", "local", "cloud"], help="Default: gpu, or cloud")
+    add.add_argument("--provider", choices=["auto", "ollama", "openai", "anthropic"])
     add.add_argument("--model", help="Model to use there (default: picked automatically)")
     add.add_argument("--key-env", metavar="VAR", help="Read the API key from this variable")
     add.set_defaults(func=cmd_add)

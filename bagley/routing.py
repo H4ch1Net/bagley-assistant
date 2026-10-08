@@ -150,6 +150,7 @@ class Router:
                     machine.base_url,
                     machine.api_key,
                     transport=self.rt.llm_transport,
+                    env=self.rt.env,
                 )
                 self._providers[key] = provider
             return provider

@@ -64,6 +64,15 @@ class _Step:
     usage: Any = None
     first_token: float | None = None
     started: float = field(default_factory=time.monotonic)
+    native: dict[str, Any] | None = None
+
+
+def public_message(message: dict[str, Any]) -> dict[str, Any]:
+    """A stored message without the provider's own copy of the reply (opaque thinking blocks)."""
+    if "native" not in (message.get("meta") or {}):
+        return message
+    meta = {k: v for k, v in message["meta"].items() if k != "native"}
+    return {**message, "meta": meta}
 
 
 def estimate_tokens(message: dict[str, Any]) -> int:
@@ -134,7 +143,10 @@ def _pair_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 j += 1
             calls = [c for c in m["tool_calls"] if c["id"] in results]
             if calls:
-                out.append({"role": "assistant", "content": content, "tool_calls": calls})
+                reply = {"role": "assistant", "content": content, "tool_calls": calls}
+                if m.get("native") and len(calls) == len(m["tool_calls"]):
+                    reply["native"] = m["native"]
+                out.append(reply)
                 out.extend(
                     {
                         "role": "tool",
@@ -149,6 +161,8 @@ def _pair_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             i = j
             continue
         out.append({"role": m["role"], "content": content})
+        if m.get("native"):
+            out[-1]["native"] = m["native"]
         i += 1
     return out
 
@@ -313,7 +327,7 @@ class Agent:
                 if prefs.tool_routing and tools:
                     offered = select_tools(tools, store.list_messages(cid), conv_mode.groups)
                     self._offered = {t.name: t for t in offered}
-                messages = self._context(prefs, cid, offered, mode, conv_mode.id)
+                messages = self._context(prefs, cid, offered, mode, conv_mode.id, provider)
                 await emit({"type": "status", "state": "thinking"})
                 while True:
                     step = _Step()
@@ -333,7 +347,7 @@ class Agent:
                                 "message": f"{model} has no native tool support. Using text-based tool calls.",
                             }
                         )
-                        messages = self._context(prefs, cid, offered, mode, conv_mode.id)
+                        messages = self._context(prefs, cid, offered, mode, conv_mode.id, provider)
                     except UnreachableError:
                         # Nothing streamed yet: let the next machine take over.
                         if step.text or step.reasoning or step.calls:
@@ -352,7 +366,7 @@ class Agent:
                         tried.add(route.machine.id)
                         mode, think = await self._setup(route, prefs, tools, emit)
                         provider, model = route.provider, route.model
-                        messages = self._context(prefs, cid, offered, mode, conv_mode.id)
+                        messages = self._context(prefs, cid, offered, mode, conv_mode.id, provider)
 
                 step_stats = self._step_stats(step)
                 stats["completion_tokens"] += step_stats["completion_tokens"]
@@ -368,13 +382,14 @@ class Agent:
                         "model": model,
                         "machine": route.machine.name,
                         **{k: v for k, v in step_stats.items() if v is not None},
+                        **({"native": step.native} if step.native else {}),
                     },
                 )
                 # Hand the step over before the next await, so a stop during the send below
                 # neither saves the text twice nor leaves its tool calls without results.
                 pending_calls = list(step.calls)
                 step = _Step()
-                await emit({"type": "message", "message": assistant})
+                await emit({"type": "message", "message": public_message(assistant)})
                 if not pending_calls:
                     break
                 while pending_calls:
@@ -446,7 +461,13 @@ class Agent:
     # Context --------------------------------------------------------------------------------
 
     def _context(
-        self, prefs: Any, cid: str, tools: list[Tool], mode: ToolMode, conv_mode: str = ""
+        self,
+        prefs: Any,
+        cid: str,
+        tools: list[Tool],
+        mode: ToolMode,
+        conv_mode: str = "",
+        provider: Provider | None = None,
     ) -> list[dict[str, Any]]:
         rt = self.rt
         system = system_prompt(
@@ -461,9 +482,16 @@ class Agent:
         stored = rt.store.list_messages(cid)
         last_user = next((m for m in reversed(stored) if m["role"] == "user"), None)
         images = self._load_images((last_user or {}).get("meta", {}).get("images") or [])
-        reserve = min(2048, prefs.context_tokens // 4)
+        # This turn's replies go back in the provider's own format (Claude's thinking blocks).
+        # Earlier turns don't: their system prompt had another time, so they would be dropped.
+        turn = max((i for i, m in enumerate(stored) if m["role"] == "user"), default=len(stored))
+        for m in stored[turn:]:
+            if m["role"] == "assistant" and m["meta"].get("native"):
+                m["native"] = m["meta"]["native"]
+        context = max(prefs.context_tokens, provider.history_tokens if provider else 0)
+        reserve = min(2048, context // 4)
         specs = len(json.dumps([t.spec() for t in tools])) // 3 if mode == "native" else 0
-        budget = prefs.context_tokens - reserve - len(system) // 3 - specs
+        budget = context - reserve - len(system) // 3 - specs
         budget = max(512, budget - IMAGE_TOKENS * len(images))
         history = fit_history(stored, budget)
         if mode != "native":
@@ -546,6 +574,8 @@ class Agent:
                 await handle(calls=chunk.tool_calls)
             if chunk.usage:
                 step.usage = chunk.usage
+            if chunk.native:
+                step.native = chunk.native
         tail = parser.finish()
         await handle(tail.text, tail.reasoning, tail.tool_calls)
 
