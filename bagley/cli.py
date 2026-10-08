@@ -433,7 +433,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from bagley.service import env_path
+
     load_dotenv(Path.cwd() / ".env")
+    load_dotenv(env_path())  # ~/.config/bagley/env (`bagley env`); the local .env wins.
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, str(getattr(args, "log_level", "warning")).upper(), logging.WARNING),
