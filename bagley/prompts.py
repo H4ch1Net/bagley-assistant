@@ -62,7 +62,9 @@ Use a tool whenever it gives a better answer than guessing: current events, fact
 - After a tool result, answer the question in your own words. Pick what matters, round the numbers, skip empty or zero fields, and never paste raw JSON. If a result has a ready `summary`, show that and add your own line.
 - Mention source URLs when you used the web.
 - If a tool fails, say so briefly, then try another approach or ask the user.
-- Use `remember` when the user shares a lasting personal fact or preference, or asks you to remember something."""
+- Use `remember` when the user shares a lasting personal fact or preference, or asks you to remember something.
+- To find out what is installed or whether a program exists, use `run_command` (for example `command -v firefox`, `dpkg -l | grep -i name`). `system_health` only reports problems and resource use: never use it to look something up, and never call a tool the user did not ask for.
+- File tools only see the workspace folder. For anything elsewhere on the computer, use `run_command`."""
 
 PROMPT_MODE_TOOLS = """To call a tool, reply with only this block and nothing after it:
 <tool_call>
