@@ -122,6 +122,8 @@ class Runtime:
             field = ".".join(str(p) for p in first["loc"])
             raise ValueError(f"{field}: {first['msg']}") from exc
         self.store.set_preferences(changes)
+        if moved or "api_key" in changes or "machines" in changes:
+            self.router.forget()  # Health measured against the old settings no longer holds.
         return self.preferences()
 
     @staticmethod

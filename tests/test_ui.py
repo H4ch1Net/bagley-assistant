@@ -434,3 +434,29 @@ def test_shell_tab_suggests_without_running(page, stack):
     page.keyboard.press("Enter")
     expect(page.locator(".shell-out .term")).to_have_text("find ~ -size +1G")
     expect(page.locator(".shell-out")).to_contain_text("not run")
+
+
+def test_claude_answers_when_this_machine_has_no_model_server(page, stack, monkeypatch):
+    from tests.test_claude import FakeClaude, _patched, anthropic, reply
+
+    api = FakeClaude()
+    api.script = [reply(text="Hello from Claude.")]
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _patched(api, anthropic.AsyncAnthropic))
+    stack.runtime.update_preferences({"base_url": "http://127.0.0.1:9"})
+    page.reload()
+    expect(page.locator("#setup")).to_contain_text("Use Claude or another hosted API")
+    page.click("#setup button:has-text('Use an API key')")
+    expect(page.locator(".hosted-api[data-preset='claude']")).to_be_in_viewport()
+    page.keyboard.press("Escape")
+
+    stack.runtime.update_preferences(
+        {"machines": [{"id": "claude", "name": "Claude", "role": "cloud", "provider": "anthropic",
+                       "base_url": "https://api.anthropic.com", "api_key": "sk-ant-ui"}]}
+    )  # fmt: skip
+    page.reload()
+    expect(page.locator("#conn-label")).to_have_text("Online // CLAUDE", timeout=15000)
+    expect(page.locator("#setup")).to_be_hidden()
+    send(page, "hi")
+    wait_idle(page)
+    expect(page.locator(".turn-assistant .prose")).to_contain_text("Hello from Claude.")
+    expect(page.locator(".turn-assistant .node")).to_contain_text("CLAUDE // claude-opus-5-5")

@@ -25,9 +25,12 @@ const BUSY = ["thinking", "reasoning", "tool", "writing"];
 let settleTimer;
 let currentStatus = "idle";
 
+/** Another machine answers (a GPU desktop, Claude) while this one's model server doesn't. */
+const routedElsewhere = () => !!state.route?.ok && state.route.machine_id !== "local";
+
 function setStatus(name, label, tool = "") {
   clearTimeout(settleTimer);
-  const offline = !state.connected || (state.health && !state.health.ok);
+  const offline = !state.connected || (state.health && !state.health.ok && !routedElsewhere());
   if (name === "idle" && offline) name = "offline";
   if (name === "idle" && !state.run && state.activity && state.activity.state !== "idle") {
     // Another client (the desktop overlay, the phone, an automation) has Bagley busy.
@@ -159,6 +162,7 @@ async function loadMachines() {
   }
   renderNode();
   renderStats();
+  if (state.health && !state.health.ok) bus.emit("health"); // The route may cover for it.
   machinesTimer = setTimeout(loadMachines, 45000);
 }
 
@@ -731,6 +735,9 @@ function renderConnection() {
   } else if (h.ok) {
     dot.className = "dot warn";
     label.textContent = "No models installed";
+  } else if (routedElsewhere()) {
+    dot.className = "dot ok";
+    label.textContent = `Online // ${state.route.machine}`;
   } else {
     dot.className = "dot bad";
     label.textContent = "Model server offline";
@@ -799,7 +806,7 @@ function renderSetup() {
   const box = $("#setup");
   const h = state.health;
   const suggestions = $("#suggestions");
-  if (!h || (h.ok && h.models && h.installed !== false)) {
+  if (!h || (h.ok && h.models && h.installed !== false) || (!h.ok && routedElsewhere())) {
     box.hidden = true;
     suggestions.hidden = false;
     return;
@@ -808,6 +815,10 @@ function renderSetup() {
   box.hidden = false;
   const retry = el("button", { class: "btn btn-primary", type: "button", onclick: async () => { retry.disabled = true; await refreshHealth(); await loadModels(); retry.disabled = false; } }, icon("refresh-cw", "icon-sm"), "Check again");
   const openSettings = el("button", { class: "btn", type: "button", onclick: () => settings.open("model") }, icon("settings", "icon-sm"), "Model settings");
+  const useKey = el("button", { class: "btn", type: "button", onclick: () => {
+    settings.open("model");
+    $("#settings-panel .hosted")?.scrollIntoView({ block: "center" });
+  } }, icon("key-round", "icon-sm"), "Use an API key");
 
   if (!h.ok) {
     box.replaceChildren(
@@ -817,8 +828,9 @@ function renderSetup() {
         el("li", {}, "Install ", el("a", { href: "https://ollama.com/download", target: "_blank", rel: "noopener", text: "Ollama" }), " (or start LM Studio, llama.cpp or any OpenAI-compatible server)."),
         el("li", {}, "Download a model with tool support:", cmdLine("ollama pull qwen3:4b")),
         el("li", {}, "Make sure the server is running, then check again. Using another server, port or your GPU machine? Change it in model settings."),
+        el("li", {}, "No local model? Use Claude or another hosted API with your own key."),
       ),
-      el("div", { class: "setup-actions" }, retry, openSettings),
+      el("div", { class: "setup-actions" }, retry, openSettings, useKey),
     );
     return;
   }

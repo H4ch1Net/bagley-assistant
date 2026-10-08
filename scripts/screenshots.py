@@ -36,14 +36,35 @@ rows = list(csv.DictReader(open("sales.csv")))
 months = [r["month"] for r in rows]
 revenue = [float(r["revenue"]) for r in rows]
 plt.style.use("dark_background")
-fig, ax = plt.subplots(figsize=(7, 3), facecolor="#11151b")
-ax.set_facecolor("#11151b")
-ax.bar(months, revenue, color="#27d3ee", width=0.6)
+fig, ax = plt.subplots(figsize=(7, 3), facecolor="#0e0e0e")
+ax.set_facecolor("#0e0e0e")
+ax.bar(months, revenue, color="#d9d9d9", width=0.6)
 ax.set_title("Revenue by month (k EUR)", loc="left", fontsize=11)
 ax.spines[["top", "right"]].set_visible(False)
 best = max(rows, key=lambda r: float(r["revenue"]))
 print(f"total {sum(revenue):.0f}k, best month {best['month']} ({best['revenue']}k)")
 """
+
+
+def chart(stack: DemoStack, page_for, ask) -> None:
+    page = page_for(1440, 900)
+    stack.mock.script = [
+        Reply(
+            reasoning="sales.csv is in the workspace; a bar chart per month answers this.",
+            tool_calls=[("run_python", {"code": CHART_CODE})],
+        ),
+        Reply(
+            text="Revenue totals **412k** over six months. June was the best month at "
+            "**88k**, and every month after March grew."
+        ),
+    ]
+    ask(page, "Chart my monthly revenue from sales.csv", approve=True)
+    page.click(".approval .btn-primary")
+    page.wait_for_selector(".tool-media img")
+    page.wait_for_selector("#send-btn:not(.stop)")
+    page.wait_for_timeout(1700)
+    page.screenshot(path=OUT / "chart.png")
+    page.context.close()
 
 
 def capture(stack: DemoStack) -> None:
@@ -156,25 +177,13 @@ def capture(stack: DemoStack) -> None:
         page.screenshot(path=OUT / "diff.png")
         page.context.close()
 
-        # 8. Python with a chart.
-        page = page_for(1440, 900)
-        stack.mock.script = [
-            Reply(
-                reasoning="sales.csv is in the workspace; a bar chart per month answers this.",
-                tool_calls=[("run_python", {"code": CHART_CODE})],
-            ),
-            Reply(
-                text="Revenue totals **412k** over six months. June was the best month at "
-                "**88k**, and every month after March grew."
-            ),
-        ]
-        ask(page, "Chart my monthly revenue from sales.csv", approve=True)
-        page.click(".approval .btn-primary")
-        page.wait_for_selector(".tool-media img")
-        page.wait_for_selector("#send-btn:not(.stop)")
-        page.wait_for_timeout(1700)
-        page.screenshot(path=OUT / "chart.png")
-        page.context.close()
+        # 8. Python with a chart (needs matplotlib in the environment Bagley runs).
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            print("matplotlib is not installed: keeping the old chart.png")
+        else:
+            chart(stack, page_for, ask)
 
         # 9. Light theme.
         page = page_for(1440, 900, theme="light")

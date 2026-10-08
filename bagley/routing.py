@@ -162,6 +162,11 @@ class Router:
 
     # Health ---------------------------------------------------------------------------------
 
+    def forget(self) -> None:
+        """Drop cached health, e.g. after a machine's address or key changed."""
+        self._health.clear()
+        self._down_until.clear()
+
     def mark_down(self, machine: MachineSpec) -> None:
         self._down_until[machine.id] = time.monotonic() + DOWN_FOR
         self._health.pop(machine.id, None)

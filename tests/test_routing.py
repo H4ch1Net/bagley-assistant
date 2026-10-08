@@ -193,3 +193,14 @@ async def test_machine_keys_survive_the_browser_round_trip(machines):
     public[1]["base_url"] = "http://elsewhere/v1"
     rt.update_preferences({"machines": public})
     assert rt.preferences()[0].machines[1].api_key == ""
+
+
+async def test_changing_a_server_forgets_its_cached_health(make_runtime):
+    rt = make_runtime()
+    prefs, _ = rt.preferences()
+    await rt.router.status(prefs)
+    assert "local" in rt.router._health
+    rt.update_preferences({"temperature": 0.3})
+    assert "local" in rt.router._health  # Unrelated settings keep it.
+    rt.update_preferences({"base_url": "http://127.0.0.1:9"})
+    assert rt.router._health == {}  # Not the 30-second-old "online" of the old address.
