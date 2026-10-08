@@ -4,12 +4,13 @@
 
 # Bagley
 
-A local-first AI assistant with an animated avatar, tool use and a web UI.<br>
-Runs on Ollama or any OpenAI-compatible model server. Your conversations stay on your machine.
+A local-first AI assistant for your desktop, in the ctOS look: an animated avatar, tool use, a web UI,<br>
+a Hyprland overlay and a terminal co-pilot. Runs on Ollama, any OpenAI-compatible server or Claude,<br>
+routing each request to the best of your machines. Your conversations stay on your machine.
 
 [![CI](https://github.com/H4ch1Net/bagley-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/H4ch1Net/bagley-assistant/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776ab)
-![Runs locally](https://img.shields.io/badge/runs-locally-27d3ee)
+![Runs locally](https://img.shields.io/badge/runs-locally-00fa9a)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <img src="docs/screenshots/chat.png" alt="Bagley answering a weather question with a tool call, reasoning and a forecast table" width="900">
@@ -22,14 +23,26 @@ Bagley is a personal assistant that runs against a model on your own computer. I
 
 Because it runs on your machine, it can do things a hosted chat app cannot. It keeps working when no window is open: reminders, scheduled tasks and page watchers run in the background and notify you. It searches your own documents by meaning, not just keywords. It edits files with a diff and a one-click undo, runs Python and shows the charts inline, and can check what is slowing your computer down.
 
+It lives on the desktop, not only in a browser tab: `SUPER+B` opens a Quickshell overlay styled like the ctOS launcher, a bar segment shows its avatar and state, and replies arrive as mako notifications. It can see what you see (a screenshot of the focused window, the highlighted text and the clipboard go to a vision model), puts commands on your zsh prompt with `??`, explains the last failed command with `bagley why`, and briefs you every morning on failed services, disks, updates, new devices, open ports, failed SSH logins and vulnerable packages.
+
+Heavy work goes to your GPU desktop over Tailscale, light work stays on the laptop, and a hosted API (Claude, OpenRouter, OpenAI and others, with your own key) takes over when neither answers. The readout always shows which machine and model is answering.
+
 It is a single Python package with no build step. The server is FastAPI, the UI is plain JavaScript, and everything is stored in one SQLite file.
 
 ## Features
 
 | | |
 |---|---|
-| **Animated avatar** | A small node graph seen through a tracking overlay: a diamond hub and a few satellite nodes inside a square viewport, joined by edges that carry signal packets, each node followed by a thin tracking box and ID. Traffic and readouts show what Bagley is doing: a slow trickle when idle, a dense mesh of packets while thinking, chained signals while reasoning, a scan line and the tool's name while a tool runs, amber while it waits for approval, a lock-on box when a reply lands, dashed, dimmed tracks when the model server is offline. |
-| **Local models** | Native Ollama support (context size, reasoning, one-click model downloads) and any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, LocalAI, Jan, OpenRouter, OpenAI. |
+| **ctOS interface** | Ground, raised and chrome grays, one monospace face, square corners and white L-corner brackets; green and red only for state. Mode cells like workspaces, a boot log, mako-style toasts and rofi-style dialogs. A theme editor changes every colour token (accents, state colours, the avatar), with presets, contrast checks and a light theme derived from the same grays; the choice syncs to your other devices and the overlay. |
+| **Animated avatar** | A small node graph seen through a tracking overlay: a diamond hub and a few satellite nodes inside a square viewport, joined by edges that carry signal packets, each node followed by a thin tracking box and ID. Traffic and readouts show what Bagley is doing: a slow trickle when idle, a dense mesh of packets while thinking, chained signals while reasoning, a scan line and the tool's name while a tool runs, a white blink while it waits for approval, a lock-on box when a reply lands, dashed, dimmed tracks when the model server is offline. |
+| **Local models** | Native Ollama support (context size, reasoning, one-click model downloads) and any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, LocalAI, Jan. |
+| **Claude and API keys** | Claude through the official Anthropic SDK (Claude Opus 5.5 by default), with adaptive thinking, prompt caching and server-side refusal fallbacks. OpenAI, OpenRouter, Groq, Mistral, Gemini, DeepSeek and xAI are one click each: paste a key, test it, pick a model. Keys stay in the local database or come from the usual variables (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`...). |
+| **Your machines** | Route each request to a GPU desktop over Tailscale, this laptop, a nearby machine or a cloud fallback, in that order, failing over when one doesn't answer. Titles and shell one-liners stay local. `bagley bench` tests every installed model on real tool-use tasks and picks the best one per machine. |
+| **On the desktop** | A `SUPER+B` Quickshell overlay for quick questions, a ctOS bar segment with the avatar and state, replies and approvals as mako notifications. `bagley desktop install` puts it all in place. |
+| **Sees your screen** | "What's this error?" grabs the focused window with grim and sends it to a vision model with the window title, the highlighted text and the clipboard. Another key explains the selection. |
+| **Shell co-pilot** | `?? find files over 1GB` puts a command on your zsh prompt without running it, flagged when it is dangerous. `bagley why` explains the last failure from its output. |
+| **Watchdog** | A morning briefing on failed systemd services, journal errors, disk and battery health and pending updates, plus new devices on your network, newly opened ports, failed SSH logins and known vulnerabilities in installed packages. To mako and your phone. |
+| **Desktop control** | Hyprland windows and workspaces, media, volume, Wi-Fi and power profiles, each with approval. Scenes like "set up coding mode" (kitty, Zed and lazygit on workspace 2). |
 | **Agent loop** | Multi-step tool calling with streaming, cancellation, step limits and approvals. Models without native function calling use a text-based tool protocol automatically. |
 | **Built-in tools** | Web search, page reader, weather, calculator, time zones, workspace files, long-term memory, optional shell. |
 | **Automations** | Reminders, scheduled tasks ("weekdays at 8:00, give me the weather and my calendar notes") and web page watchers ("tell me when this price drops"). They run in the background, post into their own chat and notify you, also as a desktop notification. Create them in chat or under **Settings → Automations**. |
@@ -43,9 +56,16 @@ It is a single Python package with no build step. The server is FastAPI, the UI 
 | **Reasoning models** | Thinking from qwen3, deepseek-r1 or gpt-oss streams into a collapsible block, separate from the answer. |
 | **Chat history** | Search, rename, delete with undo, Markdown export, edit and resend, regenerate, deep links. |
 | **Attachments** | Drop text files on the composer. They are saved to the workspace where the file tools can read them. |
-| **Voice** | Read replies aloud with your system voices (the hub fires a signal with each word). Optional dictation where the browser supports it. |
-| **Interface** | Dark and light themes, accent colours, keyboard shortcuts, responsive down to phone width, reduced-motion support, a tab-title marker when a reply finishes in the background. |
-| **Terminal** | `bagley chat` for a terminal session, `bagley ask` for scripts and pipes, `bagley doctor` to check your setup. |
+| **Voice** | A wake word, whisper.cpp dictation and replies in character with a British Piper voice or ElevenLabs. System voices in the browser too (the hub fires a signal with each word). |
+| **Phone** | Over Tailscale, installed as an app on your phone, with ntfy pushes from automations that open the chat when tapped, and an Approvals shortcut on the app icon. |
+| **Your life** | Your Obsidian vaults and the git repositories in `~/dev`: "what was I working on Tuesday?", and a weekly recap. |
+| **Modes** | Study (flashcards with spaced repetition, quizzes from your notes), cybersec (CVE lookup, decoding, hash identification, port explanations, TLS and log analysis) and work. |
+| **Work profile** | An asset inventory per client, remote health checks with alerts, and ticket notes turned into client-ready summaries in each of your working languages. |
+| **Routines** | Record the actions you approve as a named routine, then replay it or put it on a schedule. |
+| **Safer tools** | Permission tiers per tool (allow, ask, deny), a bubblewrap sandbox for commands and an audit log in ctOS terminal style. |
+| **Always-on runner** | Hand automations to an always-on machine (a Surface, say) so they keep running while your laptop sleeps. |
+| **Interface** | Keyboard shortcuts, responsive down to phone width, reduced-motion support, a tab-title marker when a reply finishes in the background. |
+| **Terminal** | `bagley chat` for a terminal session, `bagley ask` for scripts and pipes, `bagley status` for bars, `bagley doctor` to check your setup. |
 
 ## Quick start
 
@@ -187,7 +207,23 @@ Point Bagley at any OpenAI-compatible endpoint in **Settings → Model**, or wit
 | vLLM | `http://localhost:8000/v1` |
 | OpenRouter, OpenAI and other hosted APIs | the provider's base URL, plus `BAGLEY_API_KEY` |
 
-With `BAGLEY_PROVIDER=auto` (the default) Bagley detects Ollama by its API and treats anything else as OpenAI-compatible.
+With `BAGLEY_PROVIDER=auto` (the default) Bagley detects Ollama by its API, the Anthropic API by its address, and treats anything else as OpenAI-compatible.
+
+### Claude and other hosted APIs
+
+Under **Settings → Model & machines → Hosted APIs**, pick Claude (or OpenAI, OpenRouter, Groq, Mistral, Gemini, DeepSeek, xAI), paste your key and press **Test key**: it lists the models before anything is saved. The API becomes a cloud machine: by default the fallback when none of your machines answers, or the only route if you choose it under **Routing**. From the terminal:
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...           # or save the key in Settings
+bagley machines add Claude --preset claude     # Claude Opus 5.5; --model claude-sonnet-5-5 for another
+bagley machines route                          # which machine and model answer now
+```
+
+To use Claude as this machine's model instead, set **Server type** to Anthropic (Claude), or `BAGLEY_PROVIDER=anthropic` and `BAGLEY_MODEL=claude-opus-5-5`. A key left empty is read from the provider's usual variable. Claude requests use prompt caching, send up to about 100,000 tokens of history, show the model's progress notes as reasoning, and on the Claude API retry a refused request on another Claude model server-side.
+
+### Your machines
+
+Add your other machines under **Settings → Model & machines** (or `bagley machines add H4CH1 http://h4ch1:11434`). With routing on **Automatic**, heavy work goes to GPU machines first, then this one, then nearby ones, then cloud APIs; a machine that doesn't answer is skipped for 45 seconds. Chat titles and shell help stay on this machine while **Keep light work on this machine** is on. The NODE readout and each reply show which machine answered. See [docs/bench.md](docs/bench.md) for picking the best model per machine.
 
 ## Configuration
 
@@ -198,9 +234,10 @@ Settings changed in the UI are stored in the database. Environment variables (or
 
 | Variable | Default | Description |
 |---|---|---|
-| `BAGLEY_PROVIDER` | `auto` | `auto`, `ollama` or `openai` |
+| `BAGLEY_PROVIDER` | `auto` | `auto`, `ollama`, `openai` or `anthropic` |
 | `BAGLEY_BASE_URL` | `http://localhost:11434` | Model server URL. `OLLAMA_HOST` is used if this is unset. |
-| `BAGLEY_API_KEY` | | For hosted APIs |
+| `BAGLEY_API_KEY` | | For hosted APIs. Empty: the provider's own variable below. |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `XAI_API_KEY` | | Keys for hosted APIs whose key isn't saved in Settings |
 | `BAGLEY_MODEL` | first tool-capable model | Model name |
 | `BAGLEY_TEMPERATURE` | `0.6` | 0 to 2 |
 | `BAGLEY_CONTEXT_TOKENS` | `8192` | Context window. Sent to Ollama as `num_ctx`; history is trimmed to fit. |
@@ -220,10 +257,32 @@ Settings changed in the UI are stored in the database. Environment variables (or
 | `BAGLEY_PYTHON` | Bagley's own | Python interpreter for `run_python`, e.g. a venv with pandas and matplotlib |
 | `BAGLEY_ALLOW_PRIVATE_URLS` | `false` | Let web tools reach private addresses |
 | `BAGLEY_SEARXNG_URL` | | Use SearXNG for web search |
+| `BAGLEY_PUBLIC_URL` | | Address that notification clicks open, e.g. your Tailscale name for the phone |
+| `BAGLEY_TAILSCALE_USERS` | | Tailscale logins allowed to use Bagley over the tailnet, comma separated |
+| `BAGLEY_GIT_EMAILS` | from git config | Author emails counted in "Your life"; `*` counts everyone |
+| `BAGLEY_WATCHDOG` | on Linux | `1` or `0` to force the watchdog tools on or off |
+| `BAGLEY_URL`, `BAGLEY_TOKEN` | `http://127.0.0.1:8765` | For the clients (`bagley see`, the overlay, the zsh plugin, `bagley status`): the server to talk to |
 
 </details>
 
 Data lives in `~/.bagley`: `bagley.db` (chats, memories, settings, automations, file change journal), `knowledge.db` (search index), `journal/` (previous versions of changed files), `workspace/`, `plugins/` and `mcp.json`. Deleted chats can be restored with Undo; they are purged on the first start more than 24 hours after deletion.
+
+## Guides
+
+| | |
+|---|---|
+| [Desktop](docs/desktop.md) | The Quickshell overlay, bar segment, Hyprland binds and mako; `bagley see` and `bagley explain` |
+| [Shell](docs/shell.md) | `??` in zsh and `bagley why` |
+| [Watchdog](docs/watchdog.md) | The morning briefing and security checks |
+| [Desktop control](docs/desktop-control.md) | Windows, workspaces, media, volume, Wi-Fi, power and scenes |
+| [Voice](docs/voice.md) | Wake word, whisper.cpp, Piper and ElevenLabs |
+| [Phone](docs/phone.md) | Tailscale, the installable app and ntfy |
+| [Runner](docs/runner.md) | An always-on machine for automations |
+| [Your life](docs/life.md) | Vaults, repositories and recaps |
+| [Study](docs/study.md), [Cybersec](docs/cybersec.md), [Work](docs/work.md) | The modes |
+| [Routines](docs/routines.md) | Recording and replaying approved actions |
+| [Sandbox](docs/sandbox.md) | Permission tiers, bubblewrap and the audit log |
+| [Bench](docs/bench.md) | Testing models on real tool-use tasks |
 
 ## Extending
 
