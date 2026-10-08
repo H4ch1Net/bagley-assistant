@@ -18,8 +18,10 @@ export function render(panel, ctx) {
     status.replaceChildren(el("span", { class: "spinner" }), "Sending…");
     try {
       const result = await api.post("/api/notify/test", { targets: ["desktop", "phone"] });
-      const sent = Object.entries(result.sent || {}).map(([k, v]) => `${k} ${v ? "OK" : "FAILED"}`);
-      status.replaceChildren(el("span", { class: `dot ${Object.values(result.sent || {}).every(Boolean) ? "ok" : "bad"}` }), sent.length ? sent.join(" · ") : "Nothing is set up to receive it.");
+      const results = Object.entries(result.results || {});
+      const text = results.map(([target, r]) => `${target.toUpperCase()} ${r.ok ? "OK" : "FAILED"}${r.detail ? ` (${r.detail})` : ""}`);
+      text.push(`${result.windows ?? 0} window${result.windows === 1 ? "" : "s"}`);
+      status.replaceChildren(el("span", { class: `dot ${results.every(([, r]) => r.ok) ? "ok" : "bad"}` }), text.join(" · "));
     } catch (err) {
       status.replaceChildren(el("span", { class: "dot bad" }), err.message);
     }

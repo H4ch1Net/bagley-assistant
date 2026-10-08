@@ -10,6 +10,11 @@ const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
 const serverTts = () => ["piper", "elevenlabs"].includes(state.prefs?.values.tts_engine);
+
+/** Tell the server Bagley is speaking, so the desktop bar and other windows show VOICE. */
+function announceSpeaking(speaking, seconds = 120) {
+  fetch("/api/voice/speaking", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ speaking, seconds }) }).catch(() => {});
+}
 const serverStt = () => state.prefs?.values.stt_engine === "whisper" && canRecord;
 
 export const voice = {
@@ -47,6 +52,7 @@ export const voice = {
     }, []) || [text];
     const chosen = this.voices().find((v) => v.voiceURI === state.ui.voice);
     this.speaking = true;
+    announceSpeaking(true, Math.min(900, text.length / 12 + 10));
     onStart?.();
     chunks.forEach((chunk, i) => {
       const u = new SpeechSynthesisUtterance(chunk);
@@ -56,6 +62,7 @@ export const voice = {
       if (i === chunks.length - 1) {
         u.onend = u.onerror = () => {
           this.speaking = false;
+          announceSpeaking(false);
           onEnd?.();
         };
       }
@@ -69,11 +76,13 @@ export const voice = {
     const text = plainText(markdown);
     if (!text) return;
     this.speaking = true;
+    announceSpeaking(true, Math.min(900, text.length / 12 + 10));
     onStart?.();
     const finish = () => {
       if (this.audio?.src) URL.revokeObjectURL(this.audio.src);
       this.audio = null;
       this.speaking = false;
+      announceSpeaking(false);
       onEnd?.();
     };
     try {
@@ -100,6 +109,7 @@ export const voice = {
   },
 
   stop() {
+    if (this.speaking) announceSpeaking(false);
     if (synth && (synth.speaking || synth.pending)) synth.cancel();
     if (this.audio) {
       this.audio.pause();

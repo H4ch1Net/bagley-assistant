@@ -100,6 +100,7 @@ function diffStat(diff) {
 function toolExtras(card, detail, ui) {
   if (!ui || card.querySelector(".tool-bar")) return;
   const bar = el("div", { class: "tool-bar" });
+  if (ui.sandboxed) bar.append(el("span", { class: "badge badge-ok", title: "Ran inside the bubblewrap sandbox", text: "bwrap" }));
   if (ui.diff) {
     const { add, del } = diffStat(ui.diff);
     bar.append(el("span", { class: "diffstat" }, el("span", { class: "add", text: `+${add}` }), el("span", { class: "del", text: `−${del}` })));

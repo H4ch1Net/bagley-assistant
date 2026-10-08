@@ -331,15 +331,32 @@ socket.on("notification", (ev) => {
   toast(ev.body ? `${ev.title}: ${ev.body}` : ev.title, { action: open, type: ev.level === "error" || ev.level === "critical" ? "error" : "info", duration: 9000 });
   avatars.pulse(1);
   announce(`${ev.title}. ${ev.body || ""}`);
-  if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) {
-    const n = new Notification(ev.title, { body: ev.body || "", icon: "/static/favicon.svg", tag: ev.conversation_id || undefined });
-    n.onclick = () => {
-      window.focus();
-      if (ev.conversation_id) navigate(ev.conversation_id);
-      n.close();
-    };
-  }
+  if (state.ui.desktopNotify && "Notification" in window && Notification.permission === "granted" && document.hidden) showSystemNotification(ev);
   sidebar.refresh();
+});
+
+/** Through the service worker when there is one (Android Chrome only allows that), else directly. */
+async function showSystemNotification(ev) {
+  const url = ev.conversation_id ? `/#/c/${ev.conversation_id}` : "/";
+  const options = { body: ev.body || "", icon: "/static/icons/icon-192.png", tag: ev.conversation_id || undefined, data: { url } };
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    if (registration) return registration.showNotification(ev.title, options);
+  } catch {
+    /* Fall through to a page notification. */
+  }
+  const n = new Notification(ev.title, options);
+  n.onclick = () => {
+    window.focus();
+    if (ev.conversation_id) navigate(ev.conversation_id);
+    n.close();
+  };
+}
+
+navigator.serviceWorker?.addEventListener?.("message", (e) => {
+  if (e.data?.type === "navigate" && typeof e.data.url === "string" && e.data.url.startsWith("/")) {
+    location.hash = new URL(e.data.url, location.origin).hash || "#/";
+  }
 });
 
 socket.on("conversations.changed", () => sidebar.refresh());

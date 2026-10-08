@@ -6,6 +6,7 @@ import { keepToasts } from "./ui.js";
 import { voice } from "./voice.js";
 import * as appearance from "./panels/appearance.js";
 import * as audit from "./panels/audit.js";
+import "./panels/bench.js";
 import * as automations from "./panels/automations.js";
 import * as devices from "./panels/devices.js";
 import * as general from "./panels/general.js";

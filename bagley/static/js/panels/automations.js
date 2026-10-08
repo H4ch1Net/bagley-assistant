@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { state } from "../state.js";
 import { confirmDialog, toast } from "../ui.js";
 import { debounce, el, icon, relTime } from "../util.js";
-import { field, header, keepFocus } from "../settings-kit.js";
+import { field, header, keepFocus, value } from "../settings-kit.js";
 
 /** Every kind the form can create: [id, icon, label, explanation, defaults]. */
 export const KINDS = [
@@ -142,7 +142,10 @@ function row(ctx, a) {
   return el("div", { class: `list-item automation${a.enabled ? "" : " off"}`, dataset: { id: a.id } },
     el("span", { class: "tool-icon" }, a.running ? el("span", { class: "spinner" }) : icon(ICONS[a.kind] || "calendar-clock", "icon-sm")),
     el("div", { class: "grow" },
-      el("div", { class: "name" }, el("span", { class: "auto-name", text: a.name }), el("span", { class: "badge", text: a.schedule_text }), el("span", { class: "subtle", style: "font-weight:400", text: next })),
+      el("div", { class: "name" }, el("span", { class: "auto-name", text: a.name }), el("span", { class: "badge", text: a.schedule_text }),
+        a.state?.moved_to ? el("span", { class: "badge badge-accent", title: a.state.moved_to, text: "on runner" }) : null,
+        a.state?.runner_copy ? el("span", { class: "badge", title: a.state.runner_copy, text: "runner copy" }) : null,
+        el("span", { class: "subtle", style: "font-weight:400", text: next })),
       a.target ? el("div", { class: "desc mono", text: a.target }) : null,
       el("div", { class: `desc${failed ? " error-text" : ""}`, text: last }),
     ),
@@ -151,5 +154,22 @@ function row(ctx, a) {
   );
 }
 
-/** Extra per-automation actions from feature modules (e.g. move to the runner). */
-export const ROW_ACTIONS = [];
+/** Extra per-automation actions. Moving to the always-on runner is built in. */
+export const ROW_ACTIONS = [
+  (ctx, a) => {
+    if (!value("runner_url") || !a.enabled || a.state?.moved_to) return null;
+    const btn = el("button", { class: "icon-btn icon-btn-sm", type: "button", title: "Move to the runner", "aria-label": `Move ${a.name} to the runner` }, icon("upload", "icon-sm"));
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api.post(`/api/automations/${a.id}/move-to-runner`);
+        toast(`${a.name} now runs on the runner`);
+        await ctx.onAutomationsChanged();
+      } catch (err) {
+        btn.disabled = false;
+        toast(err.message, { type: "error" });
+      }
+    });
+    return btn;
+  },
+];
