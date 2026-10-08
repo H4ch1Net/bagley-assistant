@@ -46,40 +46,26 @@ export const PRESETS = [
   { id: "ctos", name: "ctOS // b1t", note: "Gray on black. Green means OK.", dark: {}, light: {} },
   { id: "upstream", name: "ctOS upstream", note: "The original TSM-061 green.", dark: { "c-ok": "#1bfd9c" }, light: {} },
   {
-    id: "monoglow", name: "Mono Glow", note: "The kitty theme: softer gray, mint accents.",
-    dark: { "c-ground": "#121212", "c-surface": "#181818", "c-raised": "#2a2a2a", "c-line": "#333333", "c-body": "#cccccc", "c-dim": "#b4b4b4", "c-chrome": "#dddddd", "c-accent": "#a6ffc9", "c-avatar": "#a6ffc9", "c-face": "#121212" },
+    id: "monoglow", name: "Mono Glow", note: "The kitty theme: softer gray, mint strings.",
+    dark: { "c-ground": "#121212", "c-surface": "#181818", "c-raised": "#2a2a2a", "c-line": "#333333", "c-body": "#cccccc", "c-dim": "#b4b4b4", "c-chrome": "#dddddd", "c-accent": "#dddddd", "c-face": "#121212" },
     light: {},
   },
   {
-    id: "signal", name: "Signal cyan", note: "Bagley's original colour.",
-    dark: { "c-accent": "#27d3ee", "c-avatar": "#27d3ee" },
-    light: { "c-accent": "#0a5f6d", "c-avatar": "#27d3ee" },
-  },
-  {
-    id: "amber", name: "Amber terminal", note: "A warm CRT readout.",
-    dark: { "c-accent": "#ffb000", "c-avatar": "#ffb000", "c-chrome": "#e8c27a", "c-string": "#ffd27a", "c-body": "#e2d6bf", "c-dim": "#d2c4a8" },
-    light: { "c-accent": "#7a4f00", "c-chrome": "#5a3c00" },
-  },
-  {
-    id: "phosphor", name: "Phosphor", note: "Green screen, everything glows.",
-    dark: { "c-ground": "#060a06", "c-surface": "#0b120b", "c-raised": "#132013", "c-line": "#1d2e1d", "c-muted": "#5a9a63", "c-dim": "#8fd69a", "c-body": "#a9eab2", "c-white": "#d6ffdb", "c-chrome": "#5fff7a", "c-accent": "#5fff7a", "c-avatar": "#5fff7a", "c-string": "#d6ffdb", "c-face": "#060a06" },
-    light: {},
-  },
-  {
-    id: "dedsec", name: "DedSec", note: "White chrome, hacker pink for errors.",
-    dark: { "c-chrome": "#ffffff", "c-accent": "#ffffff", "c-avatar": "#ffffff", "c-err": "#ff2a6d", "c-string": "#f1f1f1" },
+    id: "white", name: "White chrome", note: "Brighter chrome and frames.",
+    dark: { "c-chrome": "#ffffff", "c-accent": "#ffffff", "c-avatar": "#ffffff", "c-string": "#f1f1f1" },
     light: {},
   },
 ]; // prettier-ignore
 
+// Earlier versions offered coloured presets; ctOS has two hues, for state only.
+const RETIRED = new Set(["signal", "amber", "phosphor", "dedsec"]);
+
+// Accent choices stay in the ctOS grays.
 export const ACCENTS = [
   { color: "#d9d9d9", name: "ctOS gray" },
-  { color: "#00fa9a", name: "Signal green" },
-  { color: "#27d3ee", name: "Cyan" },
-  { color: "#ffb000", name: "Amber" },
-  { color: "#ff2a6d", name: "Pink" },
-  { color: "#9d8cff", name: "Violet" },
   { color: "#ffffff", name: "White" },
+  { color: "#cacaca", name: "Dim" },
+  { color: "#7a7a7a", name: "Secondary" },
 ];
 
 const BASE = { preset: "ctos", colors: { dark: {}, light: {} }, scale: 14, reading: "mono", brackets: true, grid: true, caps: true, updated: 0 };
@@ -102,6 +88,10 @@ export function normalize(raw) {
   look.scale = Math.min(18, Math.max(12, Number(look.scale) || 14));
   look.reading = look.reading === "sans" ? "sans" : "mono";
   for (const key of ["brackets", "grid", "caps"]) look[key] = look[key] !== false;
+  if (RETIRED.has(look.preset)) {
+    look.preset = "ctos";
+    look.colors = { dark: {}, light: {} };
+  }
   look.preset = PRESETS.some((p) => p.id === look.preset) ? look.preset : "custom";
   look.updated = Number(look.updated) || 0;
   return look;

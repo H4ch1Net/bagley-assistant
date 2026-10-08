@@ -129,7 +129,7 @@ bagley runner status
 ```
 RUNNER       https://surface.tail1234.ts.net
 LINK         [OK]   ONLINE  38 MS
-VERSION      0.1.0
+VERSION      0.2.0
 AUTOMATIONS  2
 ```
 

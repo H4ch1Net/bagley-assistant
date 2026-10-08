@@ -151,7 +151,8 @@ function passThrough(request, url) {
 async function fromNetwork(event) {
   const cache = await caches.open(CACHE);
   try {
-    const response = await fetch(event.request);
+    // Revalidate even when the browser's HTTP cache thinks its copy is fresh.
+    const response = await fetch(event.request, { cache: "no-cache" });
     if (response.ok && response.type === "basic") {
       event.waitUntil(cache.put(event.request, response.clone()));
     }

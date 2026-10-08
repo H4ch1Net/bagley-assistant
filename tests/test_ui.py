@@ -74,6 +74,71 @@ def test_chat_with_tool_call_and_reload(page, stack):
     assert "Lisbon" in page.inner_text(".tool-card .tool-detail")
 
 
+def test_reasoning_folds_to_one_line(page, stack):
+    stack.mock.script = [
+        Reply(reasoning="Check the units first.\nThen add them up.", text="Seven.")
+    ]
+    send(page, "What is 3 + 4?")
+    wait_idle(page)
+    block = page.locator(".turn-assistant .reasoning")
+    expect(block).to_have_count(1)
+    assert block.get_attribute("open") is None  # Folded, like a log line.
+    summary = block.locator("summary")
+    expect(summary).to_contain_text("Thought for")
+    expect(summary.locator(".meta")).to_have_text("008 words")
+    assert page.inner_text(".turn-assistant .prose") == "Seven."
+    summary.click()
+    expect(block.locator(".reasoning-text")).to_have_text(
+        "Check the units first.\nThen add them up."
+    )
+
+
+def test_lone_closing_think_tag_moves_the_text_into_reasoning(page, stack):
+    # A Qwen3 thinking model: reasoning in the reply, closed by a </think> it never opened.
+    stack.mock.delay = 0.02
+    stack.mock.script = [
+        Reply(text="Okay, the user wants their specs. I should look.</think>\n\nHere they are.")
+    ]
+    send(page, "my specs?")
+    wait_idle(page)
+    assert page.inner_text(".turn-assistant .prose") == "Here they are."
+    expect(page.locator(".turn-assistant .reasoning")).to_have_count(1)
+    page.click(".turn-assistant .reasoning summary")
+    expect(page.locator(".reasoning-text")).to_contain_text("the user wants their specs")
+    page.reload()
+    page.wait_for_selector(".turn-assistant .reasoning")
+    assert page.inner_text(".turn-assistant .prose") == "Here they are."
+
+
+def test_native_controls_use_the_palette(page, stack):
+    """Checkboxes, radios and focus rings in ctOS grays, never the browser's blue."""
+    page.keyboard.press("Control+,")
+    page.click("#tab-appearance")
+    box = page.locator("#follow-avatar")
+    styles = box.evaluate(
+        "(el) => { const s = getComputedStyle(el); const b = getComputedStyle(el, '::before');"
+        " return [s.appearance, s.borderTopColor, b.backgroundColor,"
+        " getComputedStyle(document.documentElement).accentColor]; }"
+    )
+    assert styles[0] == "none"
+    for color in styles[1:]:
+        r, g, b = (int(x) for x in re.findall(r"\d+", color)[:3])
+        assert max(r, g, b) - min(r, g, b) < 8, color  # A gray.
+
+
+def test_retired_colour_presets_fall_back_to_ctos(page, stack):
+    page.evaluate(
+        """localStorage.setItem("bagley.appearance", JSON.stringify(
+            {preset: "signal", colors: {dark: {"c-accent": "#27d3ee"}, light: {}}, updated: 1}))"""
+    )
+    page.reload()
+    page.wait_for_selector(".conn .dot.ok")
+    accent = page.evaluate(
+        "getComputedStyle(document.documentElement).getPropertyValue('--c-accent').trim()"
+    )
+    assert accent in ("#d9d9d9", "#202020")  # The ctOS default for the dark or light theme.
+
+
 def test_approval_deny_then_regenerate_and_allow(page, stack):
     send(page, "Save a note about the trip")
     page.click(".approval >> text=Deny")

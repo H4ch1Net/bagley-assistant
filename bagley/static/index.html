@@ -10,7 +10,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="preload" href="/static/fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
+  <link rel="stylesheet" href="{{css}}">
   <script>
     // Apply the theme and the saved colours before first paint to avoid a flash.
     (function () {
@@ -20,6 +20,7 @@
       var root = document.documentElement;
       root.dataset.theme = theme;
       var look = get("appearance", null) || {};
+      if (/^(signal|amber|phosphor|dedsec)$/.test(look.preset)) look = {}; // Retired colour presets.
       var colors = (look.colors || {})[theme] || {};
       for (var key in colors) if (/^c-[a-z]+$/.test(key) && /^#[0-9a-f]{6}$/i.test(colors[key])) root.style.setProperty("--" + key, colors[key]);
       if (look.scale) root.style.setProperty("--fs", look.scale + "px");
@@ -30,7 +31,8 @@
       if (get("reduceMotion", false)) root.classList.add("reduce-motion");
     })();
   </script>
-  <script type="module" src="/static/js/main.js?v={{version}}"></script>
+  <script type="importmap">{{importmap}}</script>
+  <script type="module" src="{{main}}"></script>
 </head>
 <body>
   <a class="skip-link" href="#composer-input">Skip to message box</a>
